@@ -1,0 +1,185 @@
+.transfers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.transfer-item {
+  background-color: var(--bg-surface-alt);
+  border: var(--border-sm);
+  border-radius: var(--radius-btn);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.12s ease;
+}
+
+.transfer-item:hover {
+  background-color: #FFFFFF;
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0px #000000;
+}
+
+.transfer-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.transfer-file-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.transfer-file-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius-sm);
+  background-color: var(--color-yellow);
+  border: var(--border-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-black);
+  flex-shrink: 0;
+  box-shadow: 2px 2px 0px #000000;
+  transition: transform 0.15s ease;
+}
+
+.transfer-item:hover .transfer-file-icon {
+  transform: rotate(8deg) scale(1.05);
+  background-color: var(--color-cyan);
+}
+
+.transfer-file-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.transfer-file-name {
+  font-family: var(--font-heading);
+  font-size: 0.92rem;
+  font-weight: 800;
+  color: var(--color-black);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 240px;
+}
+
+.transfer-subtext {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.transfer-target {
+  color: var(--color-black);
+  font-weight: 800;
+}
+
+.transfer-status-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.transfer-status-badge {
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 2px solid #000000;
+  box-shadow: 2px 2px 0px #000000;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.transfer-status-badge.completed {
+  background-color: var(--color-green);
+  color: var(--color-black);
+}
+
+.transfer-status-badge.in_progress {
+  background-color: var(--color-yellow);
+  color: var(--color-black);
+}
+
+.transfer-status-badge.failed {
+  background-color: var(--color-pink);
+  color: #FFFFFF;
+}
+
+.transfer-speed {
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  font-weight: 800;
+  color: var(--color-black);
+  background-color: #FFFFFF;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1.5px solid #000000;
+}
+
+.transfer-progress-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.progress-track {
+  width: 100%;
+  height: 12px;
+  background-color: #FFFFFF;
+  border: 2.5px solid #000000;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  position: relative;
+  box-shadow: inset 1px 1px 0px rgba(0, 0, 0, 0.2);
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background-color: var(--color-cyan);
+  border-right: 2px solid #000000;
+  transition: width 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.progress-fill.completed {
+  background-color: var(--color-green);
+}
+
+.progress-fill.failed {
+  background-color: var(--color-pink);
+}
+
+.progress-info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+
+.progress-percent {
+  font-family: var(--font-mono);
+  font-weight: 800;
+  color: var(--color-black);
+}

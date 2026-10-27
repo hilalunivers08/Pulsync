@@ -1,0 +1,62 @@
+:root {
+  
+  --bg-canvas: #FFFDF0;           
+  --bg-canvas-pattern: #F5EFCF;
+  --bg-surface: #FFFFFF;          
+  --bg-surface-alt: #FFFBE6;      
+  --bg-surface-muted: #F3EFE0;
+
+  
+  --color-black: #000000;         
+  --color-yellow: #FFE600;        
+  --color-yellow-hover: #F0D700;
+  --color-cyan: #00F0FF;          
+  --color-cyan-hover: #00D5E4;
+  --color-purple: #8B5CF6;        
+  --color-purple-hover: #7C3AED;
+  --color-purple-light: #DDD6FE;
+  --color-pink: #FF5E8E;          
+  --color-pink-hover: #E84C7A;
+  --color-green: #00E676;         
+  --color-green-hover: #00C853;
+  --color-orange: #FF9F1C;        
+  
+  
+  --text-main: #000000;           
+  --text-muted: #2D3748;          
+  --text-dim: #4A5568;            
+  --text-inverse: #FFFFFF;
+
+  
+  --status-online: #00E676;
+  --status-idle: #FF9F1C;
+  --status-busy: #8B5CF6;
+  --status-failed: #FF5E8E;
+
+  
+  --border-thick: 4px solid #000000;
+  --border-main: 3px solid #000000;
+  --border-sm: 2.5px solid #000000;
+  --border-dashed: 3px dashed #000000;
+
+  
+  --shadow-huge: 10px 10px 0px #000000;
+  --shadow-large: 8px 8px 0px #000000;
+  --shadow-card: 6px 6px 0px #000000;
+  --shadow-btn: 4px 4px 0px #000000;
+  --shadow-sm: 3px 3px 0px #000000;
+  --shadow-hover: 2px 2px 0px #000000;
+  --shadow-pressed: 0px 0px 0px #000000;
+
+  
+  --radius-card: 16px;
+  --radius-panel: 16px;
+  --radius-btn: 12px;
+  --radius-sm: 10px;
+  --radius-pill: 999px;
+
+  
+  --font-family: 'Plus Jakarta Sans', 'Fredoka', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-heading: 'Fredoka', 'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-mono: 'Space Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}

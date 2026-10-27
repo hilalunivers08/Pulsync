@@ -1,0 +1,40 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-canvas);
+  color: var(--text-main);
+  font-family: var(--font-family);
+  font-weight: 600;
+  line-height: 1.5;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-surface-alt);
+  border-left: 2.5px solid #000000;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-yellow);
+  border: 2.5px solid #000000;
+  border-radius: var(--radius-pill);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-cyan);
+}
+
+button {
+  font-family: var(--font-family);
+}
