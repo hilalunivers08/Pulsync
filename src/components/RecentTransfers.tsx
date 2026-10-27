@@ -1,9 +1,19 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { TransferItem, TransferStatus } from '../types/index.ts'
+import { API_BASE_URL } from '../config'
 
 interface RecentTransfersProps {
   transfers?: TransferItem[]
   onClearHistory?: () => void
+}
+
+interface SharedFileItem {
+  id: string
+  original_name: string
+  file_size: number
+  expires_at: string
+  active_downloads: number
+  download_url: string
 }
 
 const DEFAULT_MOCK_TRANSFERS: TransferItem[] = [
@@ -138,11 +148,61 @@ function StatusBadge({ status }: { status: TransferStatus }) {
   )
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`
+}
+
+function CountdownTimer({ expiresAt }: { expiresAt: string }) {
+  const [timeLeft, setTimeLeft] = useState('')
+
+  useEffect(() => {
+    const calculate = () => {
+      const now = new Date().getTime()
+      const exp = new Date(expiresAt).getTime()
+      const diff = exp - now
+      if (diff <= 0) {
+        setTimeLeft('00:00')
+        return
+      }
+      const minutes = Math.floor(diff / 60000)
+      const seconds = Math.floor((diff % 60000) / 1000)
+      setTimeLeft(`${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`)
+    }
+    calculate()
+    const interval = setInterval(calculate, 1000)
+    return () => clearInterval(interval)
+  }, [expiresAt])
+
+  return <span>{timeLeft}</span>
+}
+
 export function RecentTransfers({
   transfers = DEFAULT_MOCK_TRANSFERS,
   onClearHistory,
 }: RecentTransfersProps) {
   const [items, setItems] = useState<TransferItem[]>(transfers)
+  const [sharedFiles, setSharedFiles] = useState<SharedFileItem[]>([])
+
+  useEffect(() => {
+    const fetchSharedFiles = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/files`)
+        if (res.ok) {
+          const data = await res.json()
+          setSharedFiles(data)
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+    fetchSharedFiles()
+    const interval = setInterval(fetchSharedFiles, 3000)
+    return () => clearInterval(interval)
+  }, [])
 
   const handleClear = () => {
     setItems([])
@@ -150,7 +210,7 @@ export function RecentTransfers({
   }
 
   return (
-    <div className="glass-panel">
+    <div className="glass-panel w-full max-w-full box-border">
       <div className="panel-header">
         <div className="panel-title-wrapper">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -159,8 +219,8 @@ export function RecentTransfers({
             <polyline points="7 23 3 19 7 15" />
             <path d="M21 13v2a4 4 0 0 1-4 4H3" />
           </svg>
-          <h2 className="panel-title">Riwayat Transfer</h2>
-          <span className="panel-badge">{items.length} Berkas</span>
+          <h2 className="panel-title">Berkas tersedia di Wi-Fi Lokal</h2>
+          <span className="panel-badge">{sharedFiles.length} Berkas</span>
         </div>
         {items.length > 0 && (
           <button
@@ -178,58 +238,58 @@ export function RecentTransfers({
       </div>
 
       <div className="transfers-list">
-        {items.map((item) => (
-          <div key={item.id} className="transfer-item">
+        {sharedFiles.map((file) => (
+          <div key={file.id} className="transfer-item">
             <div className="transfer-top-row">
               <div className="transfer-file-group">
                 <div className="transfer-file-icon">
-                  <FileTypeIcon fileName={item.fileName} />
+                  <FileTypeIcon fileName={file.original_name} />
                 </div>
-                <div className="transfer-file-meta">
-                  <span className="transfer-file-name" title={item.fileName}>
-                    {item.fileName}
+                <div className="transfer-file-meta min-w-0 flex-1">
+                  <span className="transfer-file-name truncate break-all" title={file.original_name}>
+                    {file.original_name}
                   </span>
                   <div className="transfer-subtext">
-                    <span>{item.fileSize}</span>
+                    <span>{formatBytes(file.file_size)}</span>
                     <span>•</span>
-                    <span className="transfer-target">
-                      {item.direction === 'upload' ? 'ke' : 'dari'} {item.targetDevice}
-                    </span>
+                    <span>Sisa waktu: <CountdownTimer expiresAt={file.expires_at} /></span>
+                    {file.active_downloads > 0 && (
+                      <>
+                        <span>•</span>
+                        <span style={{ color: '#f59e0b' }}>Sedang Diunduh</span>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
 
               <div className="transfer-status-group">
-                <StatusBadge status={item.status} />
-                {item.speed && (
-                  <span className="transfer-speed">{item.speed}</span>
-                )}
-              </div>
-            </div>
-
-            <div className="transfer-progress-wrapper">
-              <div className="progress-track">
-                <div
-                  className={`progress-fill ${item.status}`}
-                  style={{ width: `${item.progress}%` }}
-                />
-              </div>
-              <div className="progress-info-row">
-                <span>{item.timestamp}</span>
-                <span className="progress-percent">{item.progress}%</span>
+                <a
+                  href={`${API_BASE_URL}/api/download/${file.id}`}
+                  className="action-btn"
+                  style={{ textDecoration: 'none' }}
+                  download
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  <span>Unduh</span>
+                </a>
               </div>
             </div>
           </div>
         ))}
 
-        {items.length === 0 && (
+        {sharedFiles.length === 0 && (
           <div className="empty-state">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
               <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
               <line x1="9" y1="9" x2="15" y2="15" />
               <line x1="15" y1="9" x2="9" y2="15" />
             </svg>
-            <p>Belum ada riwayat transfer file.</p>
+            <p>Belum ada berkas tersedia di jaringan Wi-Fi.</p>
           </div>
         )}
       </div>

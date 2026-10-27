@@ -1,13 +1,35 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import './styles/index.css'
 import { PulsarBackground } from './components/PulsarBackground.tsx'
 import { FileDropzone } from './components/FileDropzone.tsx'
 import { ConnectedDevices } from './components/ConnectedDevices.tsx'
 import { RecentTransfers } from './components/RecentTransfers.tsx'
+import { ContactModal } from './components/ContactModal.tsx'
 import type { Device, TransferItem } from './types/index.ts'
+import { API_BASE_URL } from './config'
+
+const SPACE_WORDS = ["Earth", "Mars", "Blackhole", "Europa", "Supernova", "Nebula", "Jupiter", "Andromeda", "Pulsar", "Voyager"]
+
+function getInitialUsername() {
+  if (typeof window === 'undefined') return 'Pulsar-User'
+  const stored = localStorage.getItem('pulsync_username')
+  if (stored && stored.trim() !== '') return stored
+  const word = SPACE_WORDS[Math.floor(Math.random() * SPACE_WORDS.length)]
+  const num = Math.floor(1000 + Math.random() * 9000)
+  const generated = `${word}-${num}`
+  localStorage.setItem('pulsync_username', generated)
+  return generated
+}
 
 function App() {
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null)
+  const [username, setUsername] = useState<string>(getInitialUsername())
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [showContact, setShowContact] = useState(false)
+  const [theme, setTheme] = useState<string>(() => {
+    if (typeof window === 'undefined') return 'dark'
+    return localStorage.getItem('pulsync_theme') || 'dark'
+  })
   const [transfers, setTransfers] = useState<TransferItem[]>([
     {
       id: 'tr-1',
@@ -86,11 +108,72 @@ function App() {
     )
   }
 
+  const sendPresenceInstant = async () => {
+    try {
+      await fetch(`${API_BASE_URL}/api/presence`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ username, name: username })
+      })
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  useEffect(() => {
+    sendPresenceInstant()
+    const interval = setInterval(sendPresenceInstant, 3000)
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        sendPresenceInstant()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [username])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const root = document.documentElement
+    if (theme === 'dark') {
+      root.classList.add('dark')
+    } else {
+      root.classList.remove('dark')
+    }
+    localStorage.setItem('pulsync_theme', theme)
+  }, [theme])
+
+  const handleSetUsername = () => {
+    const input = prompt('Set Username', username)
+    if (input !== null && input.trim() !== '') {
+      const newName = input.trim()
+      setUsername(newName)
+      localStorage.setItem('pulsync_username', newName)
+      setMenuOpen(false)
+      sendPresenceInstant()
+    }
+  }
+
+  const handleToggleTheme = () => {
+    setTheme(theme === 'dark' ? 'light' : 'dark')
+    setMenuOpen(false)
+  }
+
+  const handleContact = () => {
+    setMenuOpen(false)
+    setShowContact(true)
+  }
+
   return (
     <div className="pulsync-app-wrapper">
       <PulsarBackground />
 
-      <div className="pulsync-app">
+      <div className="pulsync-app w-full max-w-5xl mx-auto px-4 sm:px-6 py-6 overflow-x-hidden">
         <header className="dashboard-header">
           <div className="brand-section">
             <div className="brand-icon-wrapper">
@@ -115,7 +198,7 @@ function App() {
               <span>P2P Mesh Aktif</span>
             </div>
             <div className="network-pill" style={{ fontFamily: 'var(--font-mono)' }}>
-              <span>IP: 192.168.1.104</span>
+              <span>IP: {typeof window !== 'undefined' ? window.location.hostname : '...'}</span>
             </div>
           </div>
         </header>
@@ -128,14 +211,19 @@ function App() {
           />
         </section>
 
-        <main className="dashboard-grid">
-          <ConnectedDevices
-            selectedDeviceId={selectedDevice?.id}
-            onSelectDevice={handleSelectDevice}
-          />
-          <RecentTransfers transfers={transfers} />
+        <main className="dashboard-grid flex flex-col lg:flex-row w-full gap-4">
+          <div className="w-full lg:w-1/2">
+            <ConnectedDevices
+              selectedDeviceId={selectedDevice?.id}
+              onSelectDevice={handleSelectDevice}
+            />
+          </div>
+          <div className="w-full lg:w-1/2">
+            <RecentTransfers transfers={transfers} />
+          </div>
         </main>
       </div>
+      <ContactModal open={showContact} onClose={() => setShowContact(false)} />
     </div>
   )
 }

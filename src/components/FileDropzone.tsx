@@ -1,7 +1,8 @@
 import { useState, useRef, useCallback, type DragEvent, type ChangeEvent } from 'react'
+import { API_BASE_URL } from '../config'
 
 const MAX_FILE_SIZE = 3 * 1024 * 1024 * 1024
-const BACKEND_URL = 'http://127.0.0.1:8080'
+const BACKEND_URL = API_BASE_URL
 
 interface StagedFile {
   id: string
@@ -188,7 +189,7 @@ export function FileDropzone({
   const allDone = stagedFiles.length > 0 && stagedFiles.every((f) => f.status === 'done' || f.status === 'error')
 
   return (
-    <div className="dropzone-container">
+    <div className="dropzone-container w-full max-w-full box-border">
       {sizeErrors.length > 0 && (
         <div className="dropzone-size-error-banner">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
@@ -211,7 +212,7 @@ export function FileDropzone({
       )}
 
       <div
-        className={`dropzone-box ${isDragging ? 'is-dragging' : ''}`}
+        className={`dropzone-box p-4 sm:p-6 ${isDragging ? 'is-dragging' : ''}`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}

@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Device, DeviceType } from '../types/index.ts'
+import { API_BASE_URL } from '../config'
 
 interface ConnectedDevicesProps {
   devices?: Device[]
@@ -7,49 +8,12 @@ interface ConnectedDevicesProps {
   onSelectDevice?: (device: Device) => void
 }
 
-const DEFAULT_MOCK_DEVICES: Device[] = [
-  {
-    id: 'dev-1',
-    name: 'MacBook Pro M2 (Perangkat Ini)',
-    type: 'laptop',
-    ip: '192.168.1.104',
-    status: 'online',
-    os: 'macOS Sonoma',
-    isSelf: true,
-  },
-  {
-    id: 'dev-2',
-    name: 'Workstation Alpha',
-    type: 'desktop',
-    ip: '192.168.1.115',
-    status: 'online',
-    os: 'Windows 11 Pro',
-  },
-  {
-    id: 'dev-3',
-    name: 'Galaxy S24 Ultra',
-    type: 'phone',
-    ip: '192.168.1.142',
-    status: 'online',
-    os: 'Android 14',
-  },
-  {
-    id: 'dev-4',
-    name: 'iPad Pro 11"',
-    type: 'tablet',
-    ip: '192.168.1.188',
-    status: 'idle',
-    os: 'iPadOS 17',
-  },
-  {
-    id: 'dev-5',
-    name: 'Home Server Linux',
-    type: 'desktop',
-    ip: '192.168.1.200',
-    status: 'busy',
-    os: 'Ubuntu 24.04 LTS',
-  },
-]
+interface ApiDevice {
+  ip: string
+  name: string
+  last_seen: string
+  status: string
+}
 
 function DeviceTypeIcon({ type }: { type: DeviceType }) {
   if (type === 'phone') {
@@ -88,23 +52,82 @@ function DeviceTypeIcon({ type }: { type: DeviceType }) {
 }
 
 export function ConnectedDevices({
-  devices = DEFAULT_MOCK_DEVICES,
+  devices: _devices,
   selectedDeviceId,
   onSelectDevice,
 }: ConnectedDevicesProps) {
-  const [isScanning, setIsScanning] = useState(false)
+  const [devices, setDevices] = useState<Device[]>([])
+  const [selfIp, setSelfIp] = useState<string>('')
 
-  const handleScan = () => {
-    setIsScanning(true)
-    setTimeout(() => {
-      setIsScanning(false)
-    }, 1200)
-  }
+  useEffect(() => {
+    const sendPresence = async () => {
+      try {
+        const username = localStorage.getItem('pulsync_username') || ''
+        await fetch(`${API_BASE_URL}/api/presence`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ username, name: username })
+        })
+      } catch (e) {
+        // ignore
+      }
+    }
+    sendPresence()
+    const presenceInterval = setInterval(sendPresence, 3000)
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        sendPresence()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      clearInterval(presenceInterval)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [])
+
+  useEffect(() => {
+    const fetchDevices = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/devices`)
+        if (res.ok) {
+          const data: ApiDevice[] = await res.json()
+          const mapped: Device[] = data.map((d, idx) => ({
+            id: d.ip + idx,
+            name: d.name,
+            type: d.name.toLowerCase().includes('android') || d.name.toLowerCase().includes('ios') ? 'phone' : d.name.toLowerCase().includes('ipad') || d.name.toLowerCase().includes('tablet') ? 'tablet' : d.name.toLowerCase().includes('windows') || d.name.toLowerCase().includes('mac') || d.name.toLowerCase().includes('laptop') ? 'laptop' : 'desktop',
+            ip: d.ip,
+            status: d.status === 'online' ? 'online' : 'idle',
+            isSelf: selfIp === d.ip
+          }))
+          setDevices(mapped)
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+    fetchDevices()
+    const deviceInterval = setInterval(fetchDevices, 3000)
+    return () => clearInterval(deviceInterval)
+  }, [selfIp])
+
+  useEffect(() => {
+    try {
+      const hostname = window.location.hostname
+      if (hostname) {
+        setSelfIp(hostname)
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, [])
 
   const activeCount = devices.filter((d) => d.status === 'online').length
 
   return (
-    <div className="glass-panel">
+    <div className="glass-panel w-full max-w-full box-border">
       <div className="panel-header">
         <div className="panel-title-wrapper">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -114,30 +137,6 @@ export function ConnectedDevices({
           <h2 className="panel-title">Perangkat Terhubung</h2>
           <span className="panel-badge">{activeCount} Aktif</span>
         </div>
-        <button
-          type="button"
-          className="action-btn"
-          onClick={handleScan}
-          disabled={isScanning}
-          title="Pindai jaringan lokal"
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            style={{
-              animation: isScanning ? 'spin 1s linear infinite' : 'none',
-            }}
-          >
-            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
-          </svg>
-          <span>{isScanning ? 'Memindai...' : 'Pindai'}</span>
-        </button>
       </div>
 
       <div className="devices-list">
@@ -149,30 +148,26 @@ export function ConnectedDevices({
               key={device.id}
               className={`device-item ${isSelected ? 'is-selected' : ''}`}
             >
-              <div className="device-main-info">
+              <div className="device-main-info min-w-0 flex-1">
                 <div className="device-avatar">
                   <DeviceTypeIcon type={device.type} />
                 </div>
-                <div className="device-texts">
+                <div className="device-texts min-w-0 flex-1">
                   <div className="device-name-row">
-                    <span className="device-name">{device.name}</span>
-                    {device.isSelf && (
-                      <span className="device-self-badge">Anda</span>
+                    <span className="device-name truncate break-all">{device.name}</span>
+                    {(device.isSelf || selfIp === device.ip) && (
+                      <span className="device-self-badge">ANDA</span>
                     )}
                   </div>
                   <div className="device-meta-row">
                     <span className="device-type-tag">{device.type}</span>
                     <span>•</span>
-                    <span className="device-ip-tag">{device.ip}</span>
+                    <span className="device-ip-tag truncate break-all">{device.ip}</span>
                     <span>•</span>
                     <span className="device-status-badge">
-                      <span className={`status-dot ${device.status}`} />
-                      <span className={`status-text ${device.status}`}>
-                        {device.status === 'online'
-                          ? 'Online'
-                          : device.status === 'idle'
-                          ? 'Siaga'
-                          : 'Sibuk'}
+                      <span className={`status-dot ${device.status === 'online' ? 'online' : 'idle'}`} />
+                      <span className={`status-text ${device.status === 'online' ? 'online' : 'idle'}`}>
+                        {device.status === 'online' ? 'ONLINE' : 'OFFLINE'}
                       </span>
                     </span>
                   </div>
@@ -180,7 +175,7 @@ export function ConnectedDevices({
               </div>
 
               <div className="device-actions">
-                {!device.isSelf && (
+                {!(device.isSelf || selfIp === device.ip) && (
                   <button
                     type="button"
                     className="btn-device-action"
