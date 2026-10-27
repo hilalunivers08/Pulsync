@@ -104,3 +104,12 @@ core.*
 ehthumbs.db
 Thumbs.db
 [Dd]esktop.ini
+
+# Go binaries
+backend/*.exe
+backend/pulsync_backend
+backend/main
+
+# File download lokal
+Pulsync_Downloads/
+backend/Pulsync_Downloads/

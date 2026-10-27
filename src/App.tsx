@@ -65,15 +65,25 @@ function App() {
       id: `tr-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       fileName: file.name,
       fileSize: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
-      progress: 10,
+      progress: 0,
       status: 'in_progress',
       direction: 'upload',
-      speed: '38.4 MB/s',
+      speed: '— MB/s',
       targetDevice: targetName,
-      timestamp: 'Baru saja',
+      timestamp: 'Sedang berlangsung',
     }))
 
     setTransfers((prev) => [...newItems, ...prev])
+  }
+
+  const handleUploadComplete = (fileName: string, fileSize: string, _rawSize: number) => {
+    setTransfers((prev) =>
+      prev.map((t) =>
+        t.fileName === fileName && t.status === 'in_progress'
+          ? { ...t, fileSize, progress: 100, status: 'completed', speed: '—', timestamp: 'Baru saja' }
+          : t
+      )
+    )
   }
 
   return (
@@ -114,6 +124,7 @@ function App() {
           <FileDropzone
             selectedDeviceName={selectedDevice ? selectedDevice.name : 'Semua Perangkat'}
             onSendFiles={handleSendFiles}
+            onUploadComplete={handleUploadComplete}
           />
         </section>
 
