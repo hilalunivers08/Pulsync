@@ -1,75 +1,32 @@
-# React + TypeScript + Vite
+# ⚡ PULSYNC
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+> **Local High-Speed Peer-to-Peer File Transfer Web Application**
 
-Currently, two official plugins are available:
+Pulsync adalah aplikasi web transfer file berbasis *local-first* yang dirancang untuk mengirim file antar perangkat (seperti Laptop dan Smartphone) dalam satu jaringan Wi-Fi lokal secara cepat, aman, dan privat — tanpa memerlukan akun, koneksi internet, maupun layanan *cloud storage*.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+---
 
-## React Compiler
+## 🌟 Fitur Utama
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **Local-First & Offline:** Transfer file langsung melalui jaringan lokal (LAN/Wi-Fi) tanpa lalu lintas internet.
+- **Tanpa Akun & Tanpa Cloud:** Privasi penuh, file tidak pernah diunggah ke server pihak ketiga.
+- **High Performance C++ Engine:** Backend menggunakan C++ dengan `Boost.Asio` dan `Boost.Beast` untuk streaming file asynchronous yang cepat dan hemat RAM.
+- **Tampilan Neo-Brutalisme Kartun:** Antarmuka intuitif, responsif, dan mencolok dengan estetika kartun/retro-modern.
+- **Drag & Drop Intuitive UI:** Pilih atau tarik file langsung untuk mengirim dengan cepat.
+- **Multi-Device Support:** Kompatibel dengan semua browser modern di Laptop, HP, maupun Tablet.
 
-## Expanding the ESLint configuration
+---
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## 🛠️ Teknologi (Tech Stack)
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+### **Frontend**
+- **Framework:** React 18 + TypeScript + Vite
+- **Styling:** Standard CSS (Neo-Brutalisme / Cartoon Style)
+- **Icons:** Lucide React
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+### **Backend**
+- **Language:** C++17
+- **Networking & I/O:** Boost.Asio & Boost.Beast (HTTP/WebSocket)
+- **Build System:** CMake
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
-```
-
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
-```
+---
