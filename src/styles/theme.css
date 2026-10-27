@@ -1,0 +1,71 @@
+/* Theme variables and contrast adjustments for the saved light/dark preference. */
+:root.dark {
+  --bg-canvas: #111115;
+  --bg-canvas-pattern: #28262F;
+  --bg-surface: #1D1D23;
+  --bg-surface-alt: #27272F;
+  --bg-surface-muted: #303039;
+  --text-main: #F4F4F5;
+  --text-muted: #D4D4D8;
+  --text-dim: #A1A1AA;
+  --text-inverse: #FFFFFF;
+}
+
+.dark body,
+.dark .pulsync-app-wrapper {
+  background-color: var(--bg-canvas);
+  color: var(--text-main);
+}
+
+.dark .brand-details h1,
+.dark .panel-title,
+.dark .dropzone-text-group h3,
+.dark .device-name,
+.dark .device-ip-tag,
+.dark .transfer-file-name,
+.dark .transfer-target,
+.dark .progress-percent,
+.dark .empty-state p,
+.dark .staged-title,
+.dark .staged-file-name,
+.dark .staged-progress-label {
+  color: var(--text-main);
+}
+
+.dark .panel-title-wrapper svg,
+.dark .empty-state svg {
+  color: var(--text-main) !important;
+  stroke: var(--text-main) !important;
+}
+
+.dark .device-item:hover,
+.dark .transfer-item:hover {
+  background-color: #33333C;
+}
+
+.dark .dropzone-box:hover {
+  background-color: #24242B;
+}
+
+.dark .pulsar-comic-dots {
+  background-image: radial-gradient(#FFFFFF 1.3px, transparent 1.3px);
+  opacity: 0.045;
+}
+
+.dark .pulsar-ring {
+  stroke: #3A3942;
+}
+
+.dark .pulsar-ring-accent {
+  stroke: var(--color-purple);
+}
+
+.dark .pulsar-ring-yellow {
+  stroke: var(--color-yellow);
+}
+
+@media (max-width: 520px) {
+  .header-actions { gap: 8px; }
+  .username-pill { padding: 7px 10px; gap: 6px; font-size: 0.72rem; }
+  .header-menu-trigger { width: 40px; height: 40px; }
+}

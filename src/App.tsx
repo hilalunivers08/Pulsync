@@ -1,10 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import './styles/index.css'
 import { PulsarBackground } from './components/PulsarBackground.tsx'
 import { FileDropzone } from './components/FileDropzone.tsx'
 import { ConnectedDevices } from './components/ConnectedDevices.tsx'
 import { RecentTransfers } from './components/RecentTransfers.tsx'
-import { ContactModal } from './components/ContactModal.tsx'
 import type { Device, TransferItem } from './types/index.ts'
 import { API_BASE_URL } from './config'
 
@@ -25,7 +24,9 @@ function App() {
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null)
   const [username, setUsername] = useState<string>(getInitialUsername())
   const [menuOpen, setMenuOpen] = useState(false)
-  const [showContact, setShowContact] = useState(false)
+  const [showUsernameDialog, setShowUsernameDialog] = useState(false)
+  const [usernameDraft, setUsernameDraft] = useState(username)
+  const headerActionsRef = useRef<HTMLDivElement>(null)
   const [theme, setTheme] = useState<string>(() => {
     if (typeof window === 'undefined') return 'dark'
     return localStorage.getItem('pulsync_theme') || 'dark'
@@ -148,25 +149,55 @@ function App() {
     localStorage.setItem('pulsync_theme', theme)
   }, [theme])
 
-  const handleSetUsername = () => {
-    const input = prompt('Set Username', username)
-    if (input !== null && input.trim() !== '') {
-      const newName = input.trim()
-      setUsername(newName)
-      localStorage.setItem('pulsync_username', newName)
-      setMenuOpen(false)
-      sendPresenceInstant()
+  useEffect(() => {
+    if (!showUsernameDialog) return
+
+    const handleDialogEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowUsernameDialog(false)
     }
+    document.addEventListener('keydown', handleDialogEscape)
+    return () => document.removeEventListener('keydown', handleDialogEscape)
+  }, [showUsernameDialog])
+
+  useEffect(() => {
+    if (!menuOpen) return
+
+    const handleOutsidePointer = (event: PointerEvent) => {
+      if (!headerActionsRef.current?.contains(event.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false)
+    }
+
+    document.addEventListener('pointerdown', handleOutsidePointer)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('pointerdown', handleOutsidePointer)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [menuOpen])
+
+  const handleSetUsername = () => {
+    setUsernameDraft(username)
+    setMenuOpen(false)
+    setShowUsernameDialog(true)
+  }
+
+  const handleSaveUsername = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const newName = usernameDraft.trim().replace(/\s+/g, ' ').slice(0, 32)
+    if (!newName) return
+
+    setUsername(newName)
+    localStorage.setItem('pulsync_username', newName)
+    setShowUsernameDialog(false)
   }
 
   const handleToggleTheme = () => {
     setTheme(theme === 'dark' ? 'light' : 'dark')
     setMenuOpen(false)
-  }
-
-  const handleContact = () => {
-    setMenuOpen(false)
-    setShowContact(true)
   }
 
   return (
@@ -192,14 +223,44 @@ function App() {
             </div>
           </div>
 
-          <div className="header-status-group">
-            <div className="network-pill">
-              <span className="pulse-dot" />
-              <span>P2P Mesh Aktif</span>
+          <div className="header-actions" ref={headerActionsRef}>
+            <div className="username-pill" title="Nama perangkat ini">
+              <span className="username-rocket" aria-hidden="true">🚀</span>
+              <span className="username-label">{username}</span>
             </div>
-            <div className="network-pill" style={{ fontFamily: 'var(--font-mono)' }}>
-              <span>IP: {typeof window !== 'undefined' ? window.location.hostname : '...'}</span>
-            </div>
+
+            <button
+              type="button"
+              className="header-menu-trigger"
+              aria-label="Buka menu Pulsync"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((open) => !open)}
+            >
+              <span aria-hidden="true">⋮</span>
+            </button>
+
+            {menuOpen && (
+              <div className="header-menu-popover" role="menu" aria-label="Menu Pulsync">
+                <button type="button" className="header-menu-item" role="menuitem" onClick={handleSetUsername}>
+                  <span className="header-menu-item-icon" aria-hidden="true">✎</span>
+                  <span>Set username</span>
+                </button>
+                <button type="button" className="header-menu-item" role="menuitem" onClick={handleToggleTheme}>
+                  <span className="header-menu-item-icon" aria-hidden="true">{theme === 'dark' ? '☼' : '☾'}</span>
+                  <span>Mode {theme === 'dark' ? 'Terang' : 'Gelap'}</span>
+                </button>
+                <a
+                  href="/contact"
+                  className="header-menu-item header-menu-link"
+                  role="menuitem"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  <span className="header-menu-item-icon" aria-hidden="true">↗</span>
+                  <span>Contact me</span>
+                </a>
+              </div>
+            )}
           </div>
         </header>
 
@@ -223,7 +284,43 @@ function App() {
           </div>
         </main>
       </div>
-      <ContactModal open={showContact} onClose={() => setShowContact(false)} />
+      {showUsernameDialog && (
+        <div
+          className="username-dialog-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setShowUsernameDialog(false)
+          }}
+        >
+          <form
+            className="username-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="username-dialog-title"
+            onSubmit={handleSaveUsername}
+          >
+            <div className="username-dialog-mark" aria-hidden="true">✎</div>
+            <h2 id="username-dialog-title">Set username</h2>
+            <p>Nama ini akan terlihat oleh perangkat lain di jaringan lokal.</p>
+            <label htmlFor="pulsync-username-input">Username</label>
+            <input
+              id="pulsync-username-input"
+              autoFocus
+              maxLength={32}
+              value={usernameDraft}
+              onChange={(event) => setUsernameDraft(event.target.value)}
+              placeholder="Contoh: ANDROMEDA-4319"
+            />
+            <div className="username-dialog-actions">
+              <button type="button" className="username-dialog-cancel" onClick={() => setShowUsernameDialog(false)}>
+                Batal
+              </button>
+              <button type="submit" className="username-dialog-save" disabled={!usernameDraft.trim()}>
+                Simpan
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   )
 }

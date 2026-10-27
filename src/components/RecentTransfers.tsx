@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import type { TransferItem, TransferStatus } from '../types/index.ts'
+import { useEffect, useRef, useState } from 'react'
+import type { TransferItem } from '../types/index.ts'
 import { API_BASE_URL } from '../config'
 
 interface RecentTransfersProps {
@@ -12,67 +12,10 @@ interface SharedFileItem {
   original_name: string
   file_size: number
   expires_at: string
+  created_at?: string
   active_downloads: number
   download_url: string
 }
-
-const DEFAULT_MOCK_TRANSFERS: TransferItem[] = [
-  {
-    id: 'tr-1',
-    fileName: 'design-system-v2.fig',
-    fileSize: '124.6 MB',
-    progress: 100,
-    status: 'completed',
-    direction: 'upload',
-    speed: '48.2 MB/s',
-    targetDevice: 'Workstation Alpha',
-    timestamp: '2 menit yang lalu',
-  },
-  {
-    id: 'tr-2',
-    fileName: 'docker-compose.production.yml',
-    fileSize: '4.8 KB',
-    progress: 100,
-    status: 'completed',
-    direction: 'download',
-    speed: '1.2 MB/s',
-    targetDevice: 'Home Server Linux',
-    timestamp: '8 menit yang lalu',
-  },
-  {
-    id: 'tr-3',
-    fileName: 'dataset_model_weights.bin',
-    fileSize: '1.85 GB',
-    progress: 68,
-    status: 'in_progress',
-    direction: 'upload',
-    speed: '54.1 MB/s',
-    targetDevice: 'Workstation Alpha',
-    timestamp: 'Sedang berlangsung',
-  },
-  {
-    id: 'tr-4',
-    fileName: 'raw_footage_4k_scene1.mp4',
-    fileSize: '4.20 GB',
-    progress: 32,
-    status: 'in_progress',
-    direction: 'download',
-    speed: '62.8 MB/s',
-    targetDevice: 'iPad Pro 11"',
-    timestamp: 'Sedang berlangsung',
-  },
-  {
-    id: 'tr-5',
-    fileName: 'firmware-update-v1.4.bin',
-    fileSize: '64.0 MB',
-    progress: 42,
-    status: 'failed',
-    direction: 'upload',
-    speed: '0 KB/s',
-    targetDevice: 'Galaxy S24 Ultra',
-    timestamp: '15 menit yang lalu',
-  },
-]
 
 function FileTypeIcon({ fileName }: { fileName: string }) {
   const ext = fileName.split('.').pop()?.toLowerCase() || ''
@@ -114,40 +57,6 @@ function FileTypeIcon({ fileName }: { fileName: string }) {
   )
 }
 
-function StatusBadge({ status }: { status: TransferStatus }) {
-  if (status === 'completed') {
-    return (
-      <span className="transfer-status-badge completed">
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
-        Selesai
-      </span>
-    )
-  }
-
-  if (status === 'in_progress') {
-    return (
-      <span className="transfer-status-badge in_progress">
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-        </svg>
-        Mentransfer
-      </span>
-    )
-  }
-
-  return (
-    <span className="transfer-status-badge failed">
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-        <line x1="18" y1="6" x2="6" y2="18" />
-        <line x1="6" y1="6" x2="18" y2="18" />
-      </svg>
-      Gagal
-    </span>
-  )
-}
-
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
   const k = 1024
@@ -180,23 +89,31 @@ function CountdownTimer({ expiresAt }: { expiresAt: string }) {
   return <span>{timeLeft}</span>
 }
 
-export function RecentTransfers({
-  transfers = DEFAULT_MOCK_TRANSFERS,
-  onClearHistory,
-}: RecentTransfersProps) {
-  const [items, setItems] = useState<TransferItem[]>(transfers)
+export function RecentTransfers({ onClearHistory }: RecentTransfersProps) {
   const [sharedFiles, setSharedFiles] = useState<SharedFileItem[]>([])
+  const [isClearing, setIsClearing] = useState(false)
+  const [clearError, setClearError] = useState('')
+  const requestVersion = useRef(0)
 
   useEffect(() => {
     const fetchSharedFiles = async () => {
+      const version = requestVersion.current
       try {
         const res = await fetch(`${API_BASE_URL}/api/files`)
         if (res.ok) {
-          const data = await res.json()
-          setSharedFiles(data)
+          const data: SharedFileItem[] = await res.json()
+          // Guard against an older polling response restoring files after Clear finishes.
+          if (version === requestVersion.current && Array.isArray(data)) {
+            setSharedFiles([...data].sort((a, b) => {
+              const aTime = a.created_at ? Date.parse(a.created_at) : Number.NaN
+              const bTime = b.created_at ? Date.parse(b.created_at) : Number.NaN
+              if (Number.isFinite(aTime) && Number.isFinite(bTime)) return bTime - aTime
+              return 0 // Keep API order if talking to an older backend.
+            }))
+          }
         }
-      } catch (e) {
-        // ignore
+      } catch {
+        // Keep the last successful list while the backend is temporarily unavailable.
       }
     }
     fetchSharedFiles()
@@ -204,9 +121,39 @@ export function RecentTransfers({
     return () => clearInterval(interval)
   }, [])
 
-  const handleClear = () => {
-    setItems([])
-    onClearHistory?.()
+  const handleClear = async () => {
+    if (isClearing || sharedFiles.length === 0) return
+
+    setIsClearing(true)
+    setClearError('')
+    // Invalidate any GET request that began before this clear operation.
+    requestVersion.current += 1
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/files`, { method: 'DELETE' })
+      if (!res.ok) {
+        throw new Error(`Server merespons ${res.status}`)
+      }
+      // Invalidate requests started while DELETE was in flight.
+      requestVersion.current += 1
+      setSharedFiles([])
+      onClearHistory?.()
+    } catch (error) {
+      console.error('Gagal membersihkan berkas tersedia:', error)
+      setClearError('Berkas belum bisa dibersihkan. Pastikan backend Pulsync sedang berjalan.')
+      // Refresh from the server so the screen reflects the actual state.
+      requestVersion.current += 1
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/files`)
+        if (res.ok) {
+          const data: SharedFileItem[] = await res.json()
+          if (Array.isArray(data)) setSharedFiles(data)
+        }
+      } catch {
+        // Keep the error message visible.
+      }
+    } finally {
+      setIsClearing(false)
+    }
   }
 
   return (
@@ -222,20 +169,23 @@ export function RecentTransfers({
           <h2 className="panel-title">Berkas tersedia di Wi-Fi Lokal</h2>
           <span className="panel-badge">{sharedFiles.length} Berkas</span>
         </div>
-        {items.length > 0 && (
+        {sharedFiles.length > 0 && (
           <button
             type="button"
             className="action-btn"
             onClick={handleClear}
-            title="Bersihkan riwayat transfer"
+            disabled={isClearing}
+            title="Hapus semua berkas yang tersedia di jaringan lokal"
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
             </svg>
-            <span>Bersihkan</span>
+            <span>{isClearing ? 'Membersihkan…' : 'Bersihkan'}</span>
           </button>
         )}
       </div>
+
+      {clearError && <p className="clear-files-error" role="status">{clearError}</p>}
 
       <div className="transfers-list">
         {sharedFiles.map((file) => (

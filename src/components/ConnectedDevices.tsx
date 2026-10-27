@@ -100,6 +100,7 @@ export function ConnectedDevices({
             type: d.name.toLowerCase().includes('android') || d.name.toLowerCase().includes('ios') ? 'phone' : d.name.toLowerCase().includes('ipad') || d.name.toLowerCase().includes('tablet') ? 'tablet' : d.name.toLowerCase().includes('windows') || d.name.toLowerCase().includes('mac') || d.name.toLowerCase().includes('laptop') ? 'laptop' : 'desktop',
             ip: d.ip,
             status: d.status === 'online' ? 'online' : 'idle',
+            os: 'Unknown',
             isSelf: selfIp === d.ip
           }))
           setDevices(mapped)

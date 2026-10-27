@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,8 +27,10 @@ type FileItem struct {
 	FilePath        string    `json:"-"`
 	FileSize        int64     `json:"file_size"`
 	ExpiresAt       time.Time `json:"expires_at"`
+	CreatedAt       time.Time `json:"created_at"`
 	ActiveDownloads int       `json:"active_downloads"`
 	DownloadURL     string    `json:"download_url"`
+	DeletePending   bool      `json:"-"`
 }
 
 type Device struct {
@@ -48,7 +51,7 @@ var (
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept, X-Requested-With, X-File-Name")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -115,7 +118,7 @@ func getDeviceName(r *http.Request) string {
 func presenceHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if r.Method == http.MethodOptions {
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept, X-Requested-With, X-File-Name")
 		w.WriteHeader(http.StatusOK)
 		return
@@ -165,7 +168,7 @@ func presenceHandler(w http.ResponseWriter, r *http.Request) {
 func devicesHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if r.Method == http.MethodOptions {
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept, X-Requested-With, X-File-Name")
 		w.WriteHeader(http.StatusOK)
 		return
@@ -236,7 +239,7 @@ func startCleanupWorker() {
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if r.Method == http.MethodOptions {
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept, X-Requested-With, X-File-Name")
 		w.WriteHeader(http.StatusOK)
 		return
@@ -317,14 +320,16 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	createdAt := time.Now()
 	item := &FileItem{
-		ID:               id,
-		OriginalName:     filename,
-		FilePath:         destPath,
-		FileSize:         written,
-		ExpiresAt:        time.Now().Add(10 * time.Minute),
-		ActiveDownloads:  0,
-		DownloadURL:      "/api/download/" + id,
+		ID:              id,
+		OriginalName:    filename,
+		FilePath:        destPath,
+		FileSize:        written,
+		ExpiresAt:       createdAt.Add(10 * time.Minute),
+		CreatedAt:       createdAt,
+		ActiveDownloads: 0,
+		DownloadURL:     "/api/download/" + id,
 	}
 	storeMutex.Lock()
 	fileStore[id] = item
@@ -340,6 +345,7 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 		"original_name": item.OriginalName,
 		"file_size":     item.FileSize,
 		"expires_at":    item.ExpiresAt,
+		"created_at":    item.CreatedAt,
 		"download_url":  item.DownloadURL,
 	})
 }
@@ -347,9 +353,34 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 func filesListHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if r.Method == http.MethodOptions {
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept, X-Requested-With, X-File-Name")
 		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if r.Method == http.MethodDelete {
+		storeMutex.Lock()
+		cleared := 0
+		for id, item := range fileStore {
+			delete(fileStore, id) // Immediately hide these files from all clients.
+			cleared++
+			if item.ActiveDownloads > 0 {
+				// Let an in-flight download finish, then remove its physical file.
+				item.DeletePending = true
+				continue
+			}
+			if item.FilePath != "" {
+				if err := os.Remove(item.FilePath); err != nil && !os.IsNotExist(err) {
+					log.Printf("gagal menghapus berkas %s: %v", item.OriginalName, err)
+				}
+			}
+		}
+		storeMutex.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "ok",
+			"cleared": cleared,
+		})
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -367,6 +398,9 @@ func filesListHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	storeMutex.RUnlock()
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].CreatedAt.After(result[j].CreatedAt)
+	})
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(result)
@@ -375,7 +409,7 @@ func filesListHandler(w http.ResponseWriter, r *http.Request) {
 func downloadByIDHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if r.Method == http.MethodOptions {
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept, X-Requested-With, X-File-Name")
 		w.WriteHeader(http.StatusOK)
 		return
@@ -421,9 +455,12 @@ func downloadByIDHandler(w http.ResponseWriter, r *http.Request) {
 
 	defer func() {
 		storeMutex.Lock()
-		if it, ok := fileStore[id]; ok {
-			if it.ActiveDownloads > 0 {
-				it.ActiveDownloads--
+		if item.ActiveDownloads > 0 {
+			item.ActiveDownloads--
+		}
+		if item.ActiveDownloads == 0 && item.DeletePending && item.FilePath != "" {
+			if err := os.Remove(item.FilePath); err != nil && !os.IsNotExist(err) {
+				log.Printf("gagal menghapus berkas setelah unduhan selesai %s: %v", item.OriginalName, err)
 			}
 		}
 		storeMutex.Unlock()
