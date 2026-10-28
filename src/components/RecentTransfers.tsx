@@ -10,15 +10,14 @@ export interface LocalTransferFileView {
   expires_at?: string
   active_downloads: number
   source_name: string
-  kind: 'published' | 'available' | 'received' | 'incoming'
+  kind: 'published' | 'available'
   can_download?: boolean
   pending?: boolean
+  deleting?: boolean
   pending_stage?: string
   receiving?: boolean
   status_message?: string
   status_level?: string
-  download_url?: string
-  progress?: number
 }
 
 interface RecentTransfersProps {
@@ -26,7 +25,6 @@ interface RecentTransfersProps {
   onClearHistory?: () => void
   localFiles?: LocalTransferFileView[]
   onDownloadLocalFile?: (key: string) => void
-  onSaveReceivedFile?: (id: string) => void
   onRemoveLocalFile?: (id: string) => void
   onClearLocalFiles?: () => void
 }
@@ -117,7 +115,6 @@ export function RecentTransfers({
   onClearHistory,
   localFiles,
   onDownloadLocalFile,
-  onSaveReceivedFile,
   onRemoveLocalFile,
   onClearLocalFiles,
 }: RecentTransfersProps) {
@@ -156,7 +153,7 @@ export function RecentTransfers({
 
   const handleClear = async () => {
     if (isLocalMode) {
-      if ((localFiles || []).some(file => file.kind === 'published')) onClearLocalFiles?.()
+      if ((localFiles || []).length > 0) onClearLocalFiles?.()
       return
     }
     if (isClearing || sharedFiles.length === 0) return
@@ -194,7 +191,7 @@ export function RecentTransfers({
   }
 
   return (
-    <div className="glass-panel w-full max-w-full box-border">
+    <div className="glass-panel recent-files-panel w-full max-w-full box-border">
       <div className="panel-header">
         <div className="panel-title-wrapper">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -206,13 +203,13 @@ export function RecentTransfers({
           <h2 className="panel-title">Berkas tersedia di Wi-Fi Lokal</h2>
           <span className="panel-badge">{isLocalMode ? (localFiles?.length || 0) : sharedFiles.length} Berkas</span>
         </div>
-        {(isLocalMode ? (localFiles || []).some(file => file.kind === 'published') : sharedFiles.length > 0) && (
+        {(isLocalMode ? (localFiles || []).length > 0 : sharedFiles.length > 0) && (
           <button
             type="button"
             className="action-btn"
             onClick={handleClear}
             disabled={isClearing}
-            title="Hapus file sementara yang kamu sediakan"
+            title="Hapus semua berkas yang tersedia di jaringan lokal"
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
@@ -232,11 +229,11 @@ export function RecentTransfers({
                 <div className="transfer-file-icon"><FileTypeIcon fileName={file.original_name} /></div>
                 <div className="transfer-file-meta min-w-0 flex-1">
                   <span className="transfer-file-name truncate break-all" title={file.original_name}>{file.original_name}</span>
-                  <div className="transfer-subtext">
-                    <span>{formatBytes(file.file_size)}</span><span>•</span><span>{file.source_name}</span>
-                    {file.expires_at && file.kind !== 'received' && <><span>•</span><span>Sisa waktu: <CountdownTimer expiresAt={file.expires_at} /></span></>}
-                    {file.kind === 'published' && <><span>•</span><span>{file.active_downloads} penerima aktif</span></>}
-                    {file.kind === 'incoming' && <><span>•</span><span>Menerima {file.progress || 0}%</span></>}
+                  <div className="transfer-subtext local-transfer-subtext" title={`${formatBytes(file.file_size)} · ${file.source_name}${file.expires_at ? ` · ${new Date(file.expires_at).toLocaleTimeString()}` : ''}`}>
+                    <span className="transfer-meta-size">{formatBytes(file.file_size)}</span>
+                    <span className="transfer-meta-separator" aria-hidden="true">•</span>
+                    <span className="transfer-meta-source" title={file.source_name}>{file.source_name}</span>
+                    {file.expires_at && <><span className="transfer-meta-separator" aria-hidden="true">•</span><span className="transfer-meta-time"><CountdownTimer expiresAt={file.expires_at} /></span></>}
                   </div>
                 </div>
               </div>
@@ -245,17 +242,17 @@ export function RecentTransfers({
                   <button type="button" className="action-btn" onClick={() => onRemoveLocalFile?.(file.id)} title="Hapus file sementara">Hapus</button>
                 )}
                 {file.kind === 'available' && (
-                  <button type="button" className="action-btn" disabled={!file.can_download || file.pending || file.receiving} onClick={() => onDownloadLocalFile?.(file.key)}>
-                    {file.receiving ? 'Menerima…' : file.pending ? (file.pending_stage === 'preparing' ? 'Menyiapkan…' : 'Meminta…') : file.can_download ? 'Unduh' : 'Sumber offline'}
-                  </button>
+                  <>
+                    <button type="button" className="action-btn local-download-btn" disabled={!file.can_download || file.pending || file.receiving || file.deleting} onClick={() => onDownloadLocalFile?.(file.key)}>
+                      {file.deleting ? 'Menghapus…' : file.receiving ? 'Mengunduh…' : file.pending ? 'Menyiapkan…' : file.can_download ? 'Unduh' : 'Sumber offline'}
+                    </button>
+                    <button type="button" className="action-btn" disabled={file.deleting} onClick={() => onRemoveLocalFile?.(file.id)} title="Hapus berkas dari jaringan lokal">
+                      {file.deleting ? 'Menghapus…' : 'Hapus'}
+                    </button>
+                  </>
                 )}
-                {file.kind === 'received' && file.download_url && (
-                  <button type="button" className="action-btn" onClick={() => onSaveReceivedFile?.(file.id)}>Simpan ke perangkat</button>
-                )}
-                {file.kind === 'incoming' && <span className="transfer-subtext">Sedang berlangsung</span>}
               </div>
             </div>
-            {file.kind === 'incoming' && <div className="staged-progress-track" style={{ marginTop: 10 }}><div className="staged-progress-fill" style={{ width: `${Math.max(0, Math.min(100, file.progress || 0))}%` }} /></div>}
             {file.kind === 'available' && file.status_message && <div className={`local-file-status ${file.status_level || 'info'}`}>{file.status_message}</div>}
           </div>
         ))}

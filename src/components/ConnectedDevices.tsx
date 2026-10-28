@@ -5,6 +5,7 @@ import { API_BASE_URL } from '../config'
 interface P2PPeerView {
   id: string
   name: string
+  device_type?: string
   connected: boolean
   connectionState: string
 }
@@ -59,6 +60,18 @@ function DeviceTypeIcon({ type }: { type: DeviceType }) {
   )
 }
 
+function resolveP2PDeviceType(rawType: string | undefined, name: string): DeviceType {
+  const normalized = String(rawType || '').toLowerCase()
+  if (normalized === 'phone' || normalized === 'tablet' || normalized === 'laptop' || normalized === 'desktop') {
+    return normalized
+  }
+  // Fallback for older signaling servers that do not yet report device_type.
+  if (/ipad|tablet|playbook|silk/i.test(name)) return 'tablet'
+  if (/iphone|ipod|android.*mobile|windows phone|mobile/i.test(name)) return 'phone'
+  if (/laptop|macbook/i.test(name)) return 'laptop'
+  return 'desktop'
+}
+
 export function ConnectedDevices({
   devices: _devices,
   p2pPeers,
@@ -73,7 +86,7 @@ export function ConnectedDevices({
     const mapped: Device[] = p2pPeers.map((peer): Device => ({
       id: peer.id,
       name: peer.name,
-      type: (/android|iphone|ios/i.test(peer.name) ? 'phone' : /ipad|tablet/i.test(peer.name) ? 'tablet' : /laptop|windows|macbook/i.test(peer.name) ? 'laptop' : 'desktop') as DeviceType,
+      type: resolveP2PDeviceType(peer.device_type, peer.name),
       ip: 'LAN',
       status: peer.connected ? 'online' : 'idle',
       os: 'Browser',

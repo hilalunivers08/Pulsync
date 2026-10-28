@@ -22,10 +22,11 @@ const (
 )
 
 type p2pPeer struct {
-	ID       string    `json:"id"`
-	Name     string    `json:"name"`
-	Network  string    `json:"-"`
-	LastSeen time.Time `json:"last_seen"`
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	DeviceType string    `json:"device_type"`
+	Network    string    `json:"-"`
+	LastSeen   time.Time `json:"last_seen"`
 }
 
 type p2pSignal struct {
@@ -83,8 +84,9 @@ func (s *p2pSignalingState) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		ID         string `json:"id"`
+		Name       string `json:"name"`
+		DeviceType string `json:"device_type"`
 	}
 	if err := decodeP2PJSON(r, &in, 4*1024); err != nil {
 		writeP2PError(w, http.StatusBadRequest, "Invalid request")
@@ -103,9 +105,10 @@ func (s *p2pSignalingState) register(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now()
 	bucket := p2pNetworkBucket(ip)
+	deviceType := normalizeP2PDeviceType(in.DeviceType)
 	s.mu.Lock()
 	s.cleanupLocked(now)
-	s.peers[in.ID] = p2pPeer{ID: in.ID, Name: in.Name, Network: bucket, LastSeen: now}
+	s.peers[in.ID] = p2pPeer{ID: in.ID, Name: in.Name, DeviceType: deviceType, Network: bucket, LastSeen: now}
 	active := len(s.peers)
 	s.mu.Unlock()
 	log.Printf("P2P REGISTER name=%q id=%s remote_ip=%s bucket=%s active_peers=%d", in.Name, in.ID, ip.String(), bucket, active)
@@ -263,6 +266,15 @@ func p2pNetworkBucket(ip net.IP) string {
 		return "v6:" + fmt.Sprintf("%x:%x:%x:%x", ip[0:2], ip[2:4], ip[4:6], ip[6:8])
 	}
 	return "v6:" + ip.String()
+}
+
+func normalizeP2PDeviceType(deviceType string) string {
+	switch strings.ToLower(strings.TrimSpace(deviceType)) {
+	case "phone", "tablet", "laptop", "desktop":
+		return strings.ToLower(strings.TrimSpace(deviceType))
+	default:
+		return "desktop"
+	}
 }
 
 func cleanP2PName(name string) string {

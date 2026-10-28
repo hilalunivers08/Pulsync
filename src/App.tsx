@@ -49,7 +49,7 @@ function App() {
       file_size: file.size,
       expires_at: new Date(file.expiresAt).toISOString(),
       active_downloads: file.activeRecipients,
-      source_name: 'Perangkat ini',
+      source_name: p2pState.displayName || username,
       kind: 'published' as const,
     }))
     const available = p2pState.availableFiles.map((file) => ({
@@ -63,32 +63,15 @@ function App() {
       kind: 'available' as const,
       can_download: file.connected && !file.pending && !file.receiving,
       pending: file.pending,
+      deleting: file.deleting,
       pending_stage: file.pendingStage,
       receiving: file.receiving,
       status_message: file.statusMessage,
       status_level: file.statusLevel,
     }))
-    const incoming = p2pState.incomingTransfers.map((file) => ({
-      id: file.id,
-      key: file.id,
-      original_name: file.name,
-      file_size: file.size,
-      active_downloads: 0,
-      source_name: file.fromName,
-      kind: 'incoming' as const,
-      progress: file.size === 0 ? 100 : Math.floor((file.received / file.size) * 100),
-    }))
-    const received = p2pState.completedFiles.map((file) => ({
-      id: file.id,
-      key: file.id,
-      original_name: file.name,
-      file_size: file.size,
-      active_downloads: 0,
-      source_name: `Diterima dari ${file.fromName}`,
-      kind: 'received' as const,
-      download_url: file.downloadUrl,
-    }))
-    return [...published, ...available, ...incoming, ...received]
+    // The receiver downloads automatically when the P2P transfer completes.
+    // Do not render a separate received-files history in the shared-file panel.
+    return [...published, ...available]
   }, [p2pState])
 
   const handlePublishLocal = (file: File) => {
@@ -102,19 +85,18 @@ function App() {
     if (result && !result.ok) console.warn('[Pulsync] Gagal meminta file:', result.message)
   }
 
-  const handleSaveReceivedFile = (id: string) => {
-    const result = p2pApiRef.current?.saveReceivedFile(id)
-    if (result && !result.ok) console.warn('[Pulsync] Gagal menyimpan berkas yang diterima:', result.message)
-  }
-
   const handleRemoveLocal = (id: string) => {
-    p2pApiRef.current?.removePublishedFile(id)
+    const api = p2pApiRef.current
+    if (!api) return
+    if (p2pState.publishedFiles.some((file) => file.id === id)) {
+      api.removePublishedFile(id)
+      return
+    }
+    api.removeAvailableFile(id)
   }
 
   const handleClearLocal = () => {
-    const api = p2pApiRef.current
-    if (!api) return
-    for (const file of p2pState.publishedFiles) api.removePublishedFile(file.id)
+    p2pApiRef.current?.clearAllFiles()
   }
 
   useEffect(() => {
@@ -311,7 +293,6 @@ function App() {
             <RecentTransfers
               localFiles={localFiles}
               onDownloadLocalFile={handleDownloadLocal}
-              onSaveReceivedFile={handleSaveReceivedFile}
               onRemoveLocalFile={handleRemoveLocal}
               onClearLocalFiles={handleClearLocal}
             />

@@ -4,6 +4,7 @@ import { API_BASE_URL } from '../config'
 export interface LocalPeerState {
   id: string
   name: string
+  device_type?: string
   connected: boolean
   connectionState: string
 }
@@ -31,6 +32,7 @@ export interface LocalAvailableFile {
   expiresAt: number
   connected: boolean
   pending: boolean
+  deleting?: boolean
   pendingStage?: string
   receiving: boolean
   statusMessage?: string
@@ -78,8 +80,9 @@ export interface LocalTransferApi {
   getState: () => LocalTransferState
   publishFile: (file: File, targetPeerID?: string) => { ok: boolean; message?: string; id?: string }
   downloadFile: (key: string) => { ok: boolean; message?: string }
-  saveReceivedFile: (id: string) => { ok: boolean; message?: string }
   removePublishedFile: (id: string) => boolean
+  removeAvailableFile: (key: string) => boolean
+  clearAllFiles: () => boolean
   clearNotice: () => void
   retry: () => Promise<void>
 }

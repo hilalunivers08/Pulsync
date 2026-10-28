@@ -55,3 +55,22 @@ The signaling and local-transfer client are integrated while preserving the orig
 - The “Simpan ke perangkat” action now starts the download inside the same-origin transfer iframe that owns the Blob URL.
 - Dark mode uses near-white dashed borders and card shadows, switches headings to Plus Jakarta Sans for a calmer typographic hierarchy, and changes text to dark ink when staged/transfer cards turn white on hover.
 - Automated checks: inline JavaScript syntax, TSX parse syntax, Go tests, and `go vet` pass. A complete Vite/TypeScript build could not be verified because npm registry requests failed with DNS `EAI_AGAIN` in the build environment.
+
+
+## 2026-10-28 — Automatic download and network-wide file actions
+
+- Receiver clicks `Unduh` and the browser download is triggered automatically after the WebRTC transfer completes; no separate `Simpan ke perangkat` step or received-file history is shown in the main dashboard.
+- The receiver's available-file row now has an individual `Hapus` control as well as `Unduh`. Delete requests go back to the owning peer over the local DataChannel; the source validates that it had announced the file to that peer, then broadcasts the removal to connected local peers.
+- `Bersihkan` is visible when the local shared-file panel contains any available/published items. It removes locally published files and requests deletion of remote files listed on the receiver.
+- Dark-mode `Unduh` button uses near-white text on a dark surface; hover switches to dark text against the cyan hover surface for contrast.
+- The main dashboard renders only published and available files; incoming transfer assembly remains internal to the transfer engine and completed received files are not retained as a history list.
+- Validation for this revision: inline JavaScript syntax parse, TS/TSX syntax transpilation, Go tests, `go vet`, and ZIP integrity checks pass. Full frontend typecheck/Vite build remains unverified because project dependencies are not installed in this environment.
+
+## 2026-10-28 — Compact shared-file metadata and accurate device type
+
+- Kept the shared-file heading, count badge, and Clear button on one horizontal header row, including at narrow mobile widths.
+- Made file size, sender username, and expiry countdown compact single-line metadata; removed the “Sisa waktu:” label and the visible active-recipient count.
+- Shared files published by the current browser now show the current username instead of “Perangkat ini”.
+- Restored the dark theme heading font to the same Fredoka/Plus Jakarta Sans hierarchy used in light mode, while preserving the light/dark color contrast rules.
+- Set Clear and Delete action labels to white in dark mode (with dark text on hover for contrast).
+- Browser discovery now reports `device_type` based on mobile/tablet user-agent hints; the Go signaling service returns that type to the dashboard so phones can use a phone icon/type instead of defaulting to desktop.

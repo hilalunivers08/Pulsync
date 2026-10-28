@@ -185,6 +185,16 @@
     const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
     return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
   }
+  function detectDeviceType() {
+    const ua = navigator.userAgent || '';
+    const platform = navigator.userAgentData?.platform || navigator.platform || '';
+    const isIPadDesktopMode = /Mac/i.test(platform) && Number(navigator.maxTouchPoints || 0) > 1;
+    if (isIPadDesktopMode || /iPad|Tablet|PlayBook|Silk/i.test(ua) || (/Android/i.test(ua) && !/Mobile/i.test(ua))) return 'tablet';
+    if (navigator.userAgentData?.mobile === true || /iPhone|iPod|Android.*Mobile|Windows Phone|Mobile/i.test(ua)) return 'phone';
+    if (/MacBook|Laptop/i.test(ua)) return 'laptop';
+    return 'desktop';
+  }
+  const deviceType = detectDeviceType();
   const peerID = makePeerID().replace(/[^a-zA-Z0-9-]/g, '');
   sessionStorage.setItem('pulsync_poc_peer_id', peerID);
   const firstWords = ['Pulsar','Nebula','Europa','Voyager','Andromeda','Nova'];
@@ -210,12 +220,29 @@
   const publishedFiles = new Map(); // Local File objects; never uploaded to the server.
   const availableFiles = new Map(); // Remote metadata only.
   const pendingDownloads = new Map();
+  const pendingFileDeletes = new Map();
   const availableFileStatuses = new Map();
   const lastOfferAt = new Map();
-  let completedFiles = [];
+  const activeDownloadURLs = new Map(); // Temporary Blob URLs awaiting browser download startup.
   let selectedFile = null;
   let userNotice = null;
   function notifyUser(message, level='info') { userNotice = {message:String(message), level, at:Date.now()}; }
+  function triggerAutomaticDownload(blob, fileName) {
+    const url = URL.createObjectURL(blob);
+    activeDownloadURLs.set(url, blob.size);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = cleanIncomingName(fileName);
+    link.rel = 'noopener';
+    link.style.position = 'fixed';
+    link.style.left = '-10000px';
+    link.style.top = '0';
+    document.body.append(link);
+    link.click();
+    link.remove();
+    // Keep the Blob URL alive long enough for the browser to start the download.
+    setTimeout(() => { URL.revokeObjectURL(url); activeDownloadURLs.delete(url); }, 60_000);
+  }
   function setAvailableFileStatus(key, message, level='info') {
     availableFileStatuses.set(key, {message:String(message), level, at:Date.now()});
   }
@@ -455,6 +482,9 @@
       if (item.expiresAt > now) continue;
       availableFiles.delete(key);
       availableFileStatuses.delete(key);
+      const deleteTimer = pendingFileDeletes.get(key);
+      if (deleteTimer) clearTimeout(deleteTimer);
+      pendingFileDeletes.delete(key);
       for (const [requestID, request] of pendingDownloads) {
         if (request.key === key) { clearTimeout(request.timer); pendingDownloads.delete(requestID); }
       }
@@ -473,10 +503,15 @@
       const receiving = [...incomingFiles.values()].some(transfer => transfer.catalogKey === key);
       const info = connectedInfo(item.peerID);
       const expiry = document.createElement('div'); expiry.className='file-expiry'; expiry.textContent=`Kedaluwarsa dalam ${formatRemaining(item.expiresAt - now)}`;
-      const button = document.createElement('button'); button.type='button'; button.textContent = !info ? 'Sumber offline' : (receiving ? 'Menerima…' : pending ? 'Meminta…' : 'Unduh');
-      button.disabled = !info || pending || receiving || item.expiresAt <= now;
+      const deleting = pendingFileDeletes.has(key);
+      const button = document.createElement('button'); button.type='button'; button.textContent = deleting ? 'Menghapus…' : !info ? 'Sumber offline' : (receiving ? 'Mengunduh…' : pending ? 'Menyiapkan…' : 'Unduh');
+      button.disabled = !info || pending || receiving || deleting || item.expiresAt <= now;
       button.addEventListener('click', () => requestFileDownload(key, item));
-      card.append(title,meta,expiry,button);
+      const removeButton = document.createElement('button'); removeButton.type='button'; removeButton.textContent = deleting ? 'Menghapus…' : 'Hapus';
+      removeButton.disabled = deleting;
+      removeButton.addEventListener('click', () => requestRemoveAvailableFile(key));
+      const actions = document.createElement('div'); actions.className='file-actions'; actions.append(button, removeButton);
+      card.append(title,meta,expiry,actions);
       const fileStatus = availableFileStatuses.get(key);
       if (fileStatus?.message) {
         const feedback = document.createElement('div'); feedback.className = `transfer-feedback ${fileStatus.level || ''}`;
@@ -498,6 +533,53 @@
     renderPublishedFiles();
     renderTransferControls();
   }
+  function requestRemoveAvailableFile(key) {
+    const item = availableFiles.get(String(key));
+    if (!item) return false;
+    if (pendingFileDeletes.has(item.key)) return true;
+    const info = connectedInfo(item.peerID);
+    if (!info) {
+      setAvailableFileStatus(item.key, 'Sumber sedang offline; penghapusan dari perangkat sumber belum dapat dikonfirmasi.', 'error');
+      notifyUser(`Tidak bisa menghapus ${item.name}: sumber sedang offline.`, 'error');
+      renderAvailableFiles();
+      return false;
+    }
+    const timer = setTimeout(() => {
+      if (!pendingFileDeletes.has(item.key)) return;
+      pendingFileDeletes.delete(item.key);
+      setAvailableFileStatus(item.key, 'Pengirim tidak mengonfirmasi penghapusan. Coba lagi.', 'error');
+      notifyUser(`Penghapusan ${item.name} belum dikonfirmasi.`, 'error');
+      renderAvailableFiles();
+    }, 6000);
+    pendingFileDeletes.set(item.key, timer);
+    try {
+      info.channel.send(JSON.stringify({type:'file-delete-request', fileId:item.fileID}));
+      setAvailableFileStatus(item.key, 'Meminta penghapusan berkas dari perangkat sumber…', 'info');
+      notifyUser(`Meminta penghapusan ${item.name} dari jaringan lokal.`, 'info');
+      renderAvailableFiles();
+      return true;
+    } catch (error) {
+      clearTimeout(timer);
+      pendingFileDeletes.delete(item.key);
+      setAvailableFileStatus(item.key, `Penghapusan gagal: ${error.message}`, 'error');
+      renderAvailableFiles();
+      return false;
+    }
+  }
+  function clearAllLocalFiles() {
+    const ownIDs = [...publishedFiles.keys()];
+    const remoteKeys = [...availableFiles.keys()];
+    for (const id of ownIDs) expirePublishedFile(id, 'Dihapus melalui Bersihkan');
+    let remoteRequests = 0;
+    for (const key of remoteKeys) if (requestRemoveAvailableFile(key)) remoteRequests++;
+    if (!ownIDs.length && !remoteRequests) {
+      notifyUser('Tidak ada berkas aktif yang dapat dibersihkan.', 'info');
+    } else {
+      notifyUser('Pembersihan dimulai untuk semua berkas yang terlihat. Berkas dari perangkat lain dihapus setelah sumber mengonfirmasi.', 'success');
+    }
+    return true;
+  }
+
   function maintainTemporaryFiles() {
     const now = Date.now();
     for (const [fileID, item] of publishedFiles) {
@@ -574,8 +656,8 @@
     const container = $('incomingList');
     container.replaceChildren();
     const active = [...incomingFiles.values()].sort((a,b) => a.startedAt - b.startedAt);
-    if (!active.length && !completedFiles.length) {
-      container.innerHTML = '<div class="empty">Belum ada file diterima.</div>';
+    if (!active.length) {
+      container.innerHTML = '<div class="empty">Tidak ada transfer yang sedang berlangsung.</div>';
       return;
     }
     for (const transfer of active) {
@@ -585,17 +667,6 @@
       const status = document.createElement('div'); status.className = 'transfer-status'; status.textContent = transfer.status || `Menerima ${formatBytes(transfer.received)} dari ${formatBytes(transfer.size)}…`;
       const progress = document.createElement('progress'); progress.max = 100; progress.value = transfer.size === 0 ? 100 : Math.min(100, transfer.received / transfer.size * 100);
       card.append(title, meta, status, progress); container.append(card);
-    }
-    for (const file of completedFiles) {
-      const card = document.createElement('div'); card.className = 'transfer-item';
-      const title = document.createElement('div'); title.className = 'transfer-title'; title.textContent = file.name;
-      const meta = document.createElement('div'); meta.className = 'transfer-meta'; meta.textContent = `${formatBytes(file.size)} · dari ${file.fromName} · transfer selesai`;
-      const button = document.createElement('button'); button.type = 'button'; button.style.marginTop = '9px'; button.textContent = 'Simpan ke perangkat';
-      button.addEventListener('click', () => {
-        const link = document.createElement('a'); link.href = file.url; link.download = file.name; link.rel = 'noopener';
-        document.body.append(link); link.click(); link.remove();
-      });
-      card.append(title, meta, button); container.append(card);
     }
   }
   function renderIncomingProgress(_transfer) {
@@ -644,6 +715,9 @@
     } else if (message.type === 'file-removed') {
       const key = catalogKey(info.peer.id, String(message.fileId || ''));
       const removed = availableFiles.get(key);
+      const deleteTimer = pendingFileDeletes.get(key);
+      if (deleteTimer) clearTimeout(deleteTimer);
+      pendingFileDeletes.delete(key);
       availableFiles.delete(key);
       availableFileStatuses.delete(key);
       for (const [requestID, request] of pendingDownloads) {
@@ -654,6 +728,27 @@
       }
       renderAvailableFiles();
       if (removed) log(`File ${removed.name} tidak lagi tersedia: ${String(message.reason || 'sumber menghapus file')}.`);
+    } else if (message.type === 'file-delete-request') {
+      const fileID = String(message.fileId || '');
+      const item = publishedFiles.get(fileID);
+      if (!fileID || !item || !item.announcedTo.has(info.peer.id)) {
+        try { info.channel.send(JSON.stringify({type:'file-delete-result', fileId:fileID, ok:false, reason:'Berkas tidak tersedia untuk perangkat ini'})); } catch {}
+        return;
+      }
+      expirePublishedFile(fileID, `Dihapus oleh ${info.peer.name}`);
+      log(`${info.peer.name} menghapus ${item.name} dari daftar berkas lokal.`);
+    } else if (message.type === 'file-delete-result') {
+      const fileID = String(message.fileId || '');
+      const key = catalogKey(info.peer.id, fileID);
+      const timer = pendingFileDeletes.get(key);
+      if (timer) clearTimeout(timer);
+      pendingFileDeletes.delete(key);
+      if (message.ok === false) {
+        const item = availableFiles.get(key);
+        if (item) setAvailableFileStatus(key, String(message.reason || 'Penghapusan ditolak.'), 'error');
+        notifyUser(`Penghapusan tidak berhasil: ${String(message.reason || 'permintaan ditolak')}.`, 'error');
+        renderAvailableFiles();
+      }
     } else if (message.type === 'file-request') {
       const fileID = String(message.fileId || '');
       const transferId = String(message.transferId || '');
@@ -673,7 +768,7 @@
     } else if (message.type === 'file-start') {
       const size = Number(message.size);
       const transferId = typeof message.transferId === 'string' ? message.transferId : '';
-      const retainedBytes = completedFiles.reduce((total, file) => total + file.size, 0) + [...incomingFiles.values()].reduce((total, item) => total + item.size, 0);
+      const retainedBytes = [...activeDownloadURLs.values()].reduce((total, size) => total + size, 0) + [...incomingFiles.values()].reduce((total, item) => total + item.size, 0);
       const duplicatePeerTransfer = [...incomingFiles.values()].some(item => item.peerID === info.peer.id);
       let rejection = '';
       if (!transferId || transferId.length > 100 || !Number.isSafeInteger(size) || size < 0 || size > MAX_FILE_BYTES) rejection = `Ukuran file harus maksimal ${formatBytes(MAX_FILE_BYTES)} atau metadata tidak valid`;
@@ -696,8 +791,8 @@
       if (pendingDownload && pendingDownload.peerID === info.peer.id) {
         clearTimeout(pendingDownload.timer);
         pendingDownloads.delete(transferId);
-        setAvailableFileStatus(pendingDownload.key, `Sedang menerima ${pendingDownload.name}…`, 'info');
-        notifyUser(`Mulai menerima ${pendingDownload.name} dari ${info.peer.name}.`, 'info');
+        setAvailableFileStatus(pendingDownload.key, 'Unduhan sedang diproses…', 'info');
+        notifyUser('Unduhan dimulai; file akan tersimpan otomatis setelah transfer selesai.', 'info');
       }
       const publishedFileID = String(message.publishedFileId || pendingDownload?.fileID || '');
       const transfer = {id:transferId, peerID:info.peer.id, fromName:info.peer.name, name:cleanIncomingName(message.name), size, mimeType:String(message.mimeType || 'application/octet-stream').slice(0,120), received:0, chunks:[], status:'Menerima…', startedAt:Date.now(), catalogKey:publishedFileID ? catalogKey(info.peer.id, publishedFileID) : ''};
@@ -721,14 +816,20 @@
         return;
       }
       const blob = new Blob(transfer.chunks, {type:transfer.mimeType});
-      const file = {id:transfer.id, name:transfer.name, size:transfer.size, fromName:transfer.fromName, blob, url:URL.createObjectURL(blob), catalogKey:transfer.catalogKey, receivedAt:Date.now()};
-      completedFiles.unshift(file);
       incomingFiles.delete(transfer.id);
-      if (transfer.catalogKey) setAvailableFileStatus(transfer.catalogKey, 'Transfer selesai. Klik “Simpan ke perangkat” di daftar berkas diterima untuk mengunduh salinan.', 'success');
-      notifyUser(`File ${transfer.name} selesai diterima dan siap disimpan ke perangkat.`, 'success');
+      try {
+        triggerAutomaticDownload(blob, transfer.name);
+        if (transfer.catalogKey) setAvailableFileStatus(transfer.catalogKey, 'Unduhan dimulai otomatis.', 'success');
+        notifyUser(`Unduhan ${transfer.name} dimulai otomatis.`, 'success');
+        log(`Transfer selesai: ${transfer.name} (${formatBytes(transfer.size)}). Unduhan browser dipicu otomatis.`);
+        try { info.channel.send(JSON.stringify({type:'file-ack', transferId:transfer.id, size:transfer.size})); } catch {}
+      } catch (error) {
+        if (transfer.catalogKey) setAvailableFileStatus(transfer.catalogKey, 'File diterima, tetapi browser gagal memulai unduhan otomatis. Coba kembali.', 'error');
+        notifyUser(`File ${transfer.name} diterima, tetapi unduhan otomatis gagal: ${error.message}`, 'error');
+        try { info.channel.send(JSON.stringify({type:'file-ack', transferId:transfer.id, size:transfer.size})); } catch {}
+        log(`File ${transfer.name} diterima tetapi unduhan otomatis gagal: ${error.message}`, 'error');
+      }
       renderIncomingFiles(); renderAvailableFiles();
-      try { info.channel.send(JSON.stringify({type:'file-ack', transferId:transfer.id, size:transfer.size})); } catch {}
-      log(`Transfer selesai: ${transfer.name} (${formatBytes(transfer.size)}). Klik Simpan ke perangkat untuk menyimpan salinan lokal.`);
     } else if (message.type === 'file-ready') {
       const pending = outgoingTransfers.get(String(message.transferId || ''));
       if (pending && pending.peerID === info.peer.id && pending.phase === 'waiting-ready') {
@@ -986,7 +1087,7 @@
     }
   }
   async function heartbeat() {
-    await request('/api/p2p/hello', {method:'POST',body:JSON.stringify({id:peerID,name:displayName})});
+    await request('/api/p2p/hello', {method:'POST',body:JSON.stringify({id:peerID,name:displayName,device_type:deviceType})});
   }
   async function discover() {
     const others = await request('/api/p2p/peers?id='+encodeURIComponent(peerID));
@@ -1060,6 +1161,8 @@
   async function stop() {
     running = false;
     intervals.forEach(clearInterval);
+    for (const timer of pendingFileDeletes.values()) clearTimeout(timer);
+    pendingFileDeletes.clear();
     for (const info of connections.values()) { try { info.pc.close(); } catch {} }
     connections.clear();
     try { await request('/api/p2p/leave', {method:'POST',body:JSON.stringify({id:peerID})}); } catch {}
@@ -1087,7 +1190,7 @@
       const peerRows = [...peers.values()].map(peer => {
         const info = connections.get(peer.id);
         const connected = !!connectedInfo(peer.id);
-        return {id:peer.id, name:peer.name, connected, connectionState:info?.pc?.connectionState || info?.state || 'discovering'};
+        return {id:peer.id, name:peer.name, device_type:peer.device_type || '', connected, connectionState:info?.pc?.connectionState || info?.state || 'discovering'};
       });
       const publishedRows = [...publishedFiles.values()].map(item => ({
         id:item.id, name:item.name, size:item.size, mimeType:item.mimeType,
@@ -1100,14 +1203,11 @@
         mimeType:item.mimeType, fromName:item.fromName, publishedAt:item.publishedAt,
         expiresAt:item.expiresAt, connected:!!connectedInfo(item.peerID),
         pending:[...pendingDownloads.values()].some(request => request.key === key),
+        deleting:pendingFileDeletes.has(key),
         pendingStage:[...pendingDownloads.values()].find(request => request.key === key)?.stage || '',
         receiving:[...incomingFiles.values()].some(transfer => transfer.catalogKey === key),
         statusMessage:availableFileStatuses.get(key)?.message || '',
         statusLevel:availableFileStatuses.get(key)?.level || 'info',
-      }));
-      const completedRows = completedFiles.map(file => ({
-        id:file.id, name:file.name, size:file.size, fromName:file.fromName,
-        receivedAt:file.receivedAt, downloadUrl:file.url,
       }));
       const incomingRows = [...incomingFiles.values()].map(file => ({
         id:file.id, name:file.name, size:file.size, received:file.received,
@@ -1115,7 +1215,7 @@
       }));
       return {status:$('statusText')?.textContent || 'Memulai…', peerID, displayName,
         peers:peerRows, publishedFiles:publishedRows, availableFiles:availableRows,
-        completedFiles:completedRows, incomingTransfers:incomingRows, notice:userNotice};
+        completedFiles:[], incomingTransfers:incomingRows, notice:userNotice};
     },
     publishFile(file, targetPeerID = '') {
       // Files passed from the parent dashboard belong to another browser realm,
@@ -1138,8 +1238,14 @@
     clearNotice() { userNotice = null; },
     removePublishedFile(id) {
       if (!publishedFiles.has(String(id))) return false;
-      expirePublishedFile(String(id), 'Dihapus oleh pengirim');
+      expirePublishedFile(String(id), 'Dihapus oleh pengguna');
       return true;
+    },
+    removeAvailableFile(key) {
+      return requestRemoveAvailableFile(String(key));
+    },
+    clearAllFiles() {
+      return clearAllLocalFiles();
     },
     async retry() {
       await heartbeat();
@@ -1157,7 +1263,6 @@
     const body = JSON.stringify({id:peerID});
     try { navigator.sendBeacon(api('/api/p2p/leave'), new Blob([body], {type:'application/json'})); } catch {}
     for (const info of connections.values()) { try { info.pc.close(); } catch {} }
-    for (const file of completedFiles) { try { URL.revokeObjectURL(file.url); } catch {} }
   });
   window.addEventListener('pageshow', event => {
     if (event.persisted || !running) void start();

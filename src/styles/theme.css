@@ -241,3 +241,166 @@
 .dark .username-dialog-actions button:hover:not(:disabled) {
   box-shadow: 1px 1px 0 #F4F4F5;
 }
+
+
+/* Local network file actions remain legible in dark mode. */
+.dark .local-download-btn {
+  color: #F4F4F5;
+  background-color: #27272F;
+  border-color: #F4F4F5;
+}
+
+.dark .local-download-btn:hover:not(:disabled),
+.dark .local-download-btn:active:not(:disabled) {
+  color: #17171B;
+  background-color: var(--color-cyan);
+  border-color: #17171B;
+}
+
+/* Latest compact shared-file layout: preserve a single-line badge and metadata. */
+.recent-files-panel .panel-header {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.recent-files-panel .panel-title-wrapper {
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.recent-files-panel .panel-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: 1.2;
+  overflow-wrap: normal;
+}
+
+.recent-files-panel .panel-badge {
+  flex: 0 0 auto;
+  width: max-content;
+  max-width: none;
+  white-space: nowrap;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.recent-files-panel .panel-header > .action-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.local-transfer-subtext {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  line-height: 1.25;
+}
+
+.local-transfer-subtext .transfer-meta-size,
+.local-transfer-subtext .transfer-meta-time,
+.local-transfer-subtext .transfer-meta-separator {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.local-transfer-subtext .transfer-meta-source {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Keep the dark theme's typeface and weight hierarchy consistent with light mode. */
+:root.dark {
+  --font-family: 'Plus Jakarta Sans', 'Fredoka', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-heading: 'Fredoka', 'Plus Jakarta Sans', system-ui, sans-serif;
+}
+
+.dark body,
+.dark .pulsync-app-wrapper {
+  font-family: var(--font-family);
+  font-weight: inherit;
+  letter-spacing: normal;
+}
+
+.dark .brand-details h1,
+.dark .panel-title,
+.dark .dropzone-text-group h3,
+.dark .staged-title,
+.dark .device-name,
+.dark .transfer-file-name,
+.dark .username-dialog h2 {
+  font-family: var(--font-heading);
+  font-weight: 800;
+}
+
+.dark .brand-details h1 { letter-spacing: -0.02em; }
+.dark .panel-title,
+.dark .dropzone-text-group h3,
+.dark .device-name { letter-spacing: -0.01em; }
+.dark .staged-title,
+.dark .transfer-file-name,
+.dark .username-dialog h2 { letter-spacing: normal; }
+
+.dark .brand-tagline,
+.dark .transfer-subtext,
+.dark .device-meta-row { font-weight: 700; }
+.dark .staged-file-size,
+.dark .dropzone-text-group p { font-weight: 600; }
+
+/* All local file action labels stay readable on the dark surface. */
+.dark .recent-files-panel .action-btn {
+  color: #F4F4F5;
+}
+
+.dark .recent-files-panel .action-btn:hover:not(:disabled),
+.dark .recent-files-panel .action-btn:active:not(:disabled) {
+  color: #17171B;
+}
+
+@media (max-width: 520px) {
+  .recent-files-panel .panel-header {
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+
+  .recent-files-panel .panel-title-wrapper {
+    flex: 1 1 auto;
+    min-width: 0;
+    flex-wrap: nowrap;
+    gap: 7px;
+  }
+
+  .recent-files-panel .panel-title {
+    font-size: 0.9rem;
+    line-height: 1.18;
+  }
+
+  .recent-files-panel .panel-badge {
+    font-size: 0.62rem;
+    padding: 3px 6px;
+    letter-spacing: 0.01em;
+  }
+
+  .recent-files-panel .panel-header > .action-btn {
+    padding: 6px 8px;
+    gap: 5px;
+    font-size: 0.69rem;
+  }
+
+  .recent-files-panel .transfer-subtext.local-transfer-subtext {
+    font-size: 0.68rem;
+    gap: 5px;
+  }
+}
