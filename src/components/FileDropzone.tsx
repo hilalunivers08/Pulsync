@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, type DragEvent, type ChangeEvent } from 
 import { API_BASE_URL } from '../config'
 
 const MAX_FILE_SIZE = 3 * 1024 * 1024 * 1024
+const MAX_LOCAL_FILE_SIZE = 25 * 1024 * 1024
 const BACKEND_URL = API_BASE_URL
 
 interface StagedFile {
@@ -19,6 +20,8 @@ interface FileDropzoneProps {
   selectedDeviceName?: string
   onSendFiles?: (files: File[]) => void
   onUploadComplete?: (fileName: string, fileSize: string, rawSize: number) => void
+  transportMode?: 'server' | 'local'
+  onPublishLocal?: (file: File) => Promise<{ ok: boolean; message?: string }> | { ok: boolean; message?: string }
 }
 
 function formatBytes(bytes: number): string {
@@ -37,6 +40,8 @@ export function FileDropzone({
   selectedDeviceName = 'Semua Perangkat Terdekat',
   onSendFiles,
   onUploadComplete,
+  transportMode = 'server',
+  onPublishLocal,
 }: FileDropzoneProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([])
@@ -74,10 +79,12 @@ export function FileDropzone({
   const addFiles = (files: File[]) => {
     const errors: string[] = []
     const valid: StagedFile[] = []
+    const maxSize = transportMode === 'local' ? MAX_LOCAL_FILE_SIZE : MAX_FILE_SIZE
 
     for (const file of files) {
-      if (file.size > MAX_FILE_SIZE) {
-        errors.push(`"${file.name}" melebihi batas 3 GB (${formatBytes(file.size)})`)
+      if (file.size > maxSize) {
+        const limitLabel = transportMode === 'local' ? '25 MiB' : '3 GB'
+        errors.push(`"${file.name}" melebihi batas ${limitLabel} (${formatBytes(file.size)})`)
       } else {
         valid.push({
           id: `${file.name}-${file.lastModified}-${Math.random()}`,
@@ -110,6 +117,22 @@ export function FileDropzone({
     setStagedFiles((prev) =>
       prev.map((f) => f.id === staged.id ? { ...f, status: 'uploading', progress: 0 } : f)
     )
+
+    if (transportMode === 'local') {
+      void (async () => {
+        try {
+          if (!onPublishLocal) throw new Error('Mesin transfer lokal belum siap. Muat ulang halaman dan coba lagi.')
+          const result = await onPublishLocal(staged.rawFile)
+          if (!result.ok) throw new Error(result.message || 'File gagal disediakan di jaringan lokal.')
+          setStagedFiles((prev) => prev.map((f) => f.id === staged.id ? { ...f, status: 'done', progress: 100 } : f))
+          onUploadComplete?.(staged.name, staged.size, staged.rawSize)
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Gagal menyediakan file di jaringan lokal.'
+          setStagedFiles((prev) => prev.map((f) => f.id === staged.id ? { ...f, status: 'error', error: message } : f))
+        }
+      })()
+      return
+    }
 
     const xhr = new XMLHttpRequest()
     xhrRefs.current.set(staged.id, xhr)
@@ -174,15 +197,13 @@ export function FileDropzone({
     const formData = new FormData()
     formData.append('file', staged.rawFile)
     xhr.send(formData)
-  }, [onUploadComplete])
+  }, [onUploadComplete, onPublishLocal, transportMode])
 
   const handleSend = () => {
     const pending = stagedFiles.filter((f) => f.status === 'pending')
     if (pending.length === 0) return
-    onSendFiles?.(pending.map((f) => f.rawFile))
-    for (const f of pending) {
-      uploadFile(f)
-    }
+    if (transportMode === 'server') onSendFiles?.(pending.map((f) => f.rawFile))
+    for (const f of pending) uploadFile(f)
   }
 
   const hasPending = stagedFiles.some((f) => f.status === 'pending')
@@ -238,7 +259,7 @@ export function FileDropzone({
           <h3>Tarik dan lepas file ke sini untuk mentransfer</h3>
           <p>atau klik untuk menjelajah file dari perangkat lokal Anda.</p>
           <div className="dropzone-limit-hint">
-            Tujuan: <strong style={{ color: '#c4b5fd' }}>{selectedDeviceName}</strong> • Maks. <strong>3 GB</strong> per file
+            Tujuan: <strong style={{ color: '#c4b5fd' }}>{selectedDeviceName}</strong> • Maks. <strong>{transportMode === 'local' ? '25 MiB' : '3 GB'}</strong> per file
           </div>
         </div>
 
@@ -314,7 +335,7 @@ export function FileDropzone({
                           />
                         </div>
                         <span className="staged-progress-label">
-                          {file.status === 'done' ? '✓ Selesai' : `${file.progress}%`}
+                          {file.status === 'done' ? (transportMode === 'local' ? '✓ Tersedia' : '✓ Selesai') : `${file.progress}%`}
                         </span>
                       </div>
                     )}
@@ -354,7 +375,7 @@ export function FileDropzone({
                   <line x1="22" y1="2" x2="11" y2="13" />
                   <polygon points="22 2 15 22 11 13 2 9 22 2" />
                 </svg>
-                Kirim ke {selectedDeviceName}
+                {transportMode === 'local' ? `Sediakan ke ${selectedDeviceName}` : `Kirim ke ${selectedDeviceName}`}
               </button>
             </div>
           )}

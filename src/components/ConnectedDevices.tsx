@@ -2,8 +2,16 @@ import { useEffect, useState } from 'react'
 import type { Device, DeviceType } from '../types/index.ts'
 import { API_BASE_URL } from '../config'
 
+interface P2PPeerView {
+  id: string
+  name: string
+  connected: boolean
+  connectionState: string
+}
+
 interface ConnectedDevicesProps {
   devices?: Device[]
+  p2pPeers?: P2PPeerView[]
   selectedDeviceId?: string | null
   onSelectDevice?: (device: Device) => void
 }
@@ -53,6 +61,7 @@ function DeviceTypeIcon({ type }: { type: DeviceType }) {
 
 export function ConnectedDevices({
   devices: _devices,
+  p2pPeers,
   selectedDeviceId,
   onSelectDevice,
 }: ConnectedDevicesProps) {
@@ -60,6 +69,21 @@ export function ConnectedDevices({
   const [selfIp, setSelfIp] = useState<string>('')
 
   useEffect(() => {
+    if (p2pPeers === undefined) return
+    const mapped: Device[] = p2pPeers.map((peer): Device => ({
+      id: peer.id,
+      name: peer.name,
+      type: (/android|iphone|ios/i.test(peer.name) ? 'phone' : /ipad|tablet/i.test(peer.name) ? 'tablet' : /laptop|windows|macbook/i.test(peer.name) ? 'laptop' : 'desktop') as DeviceType,
+      ip: 'LAN',
+      status: peer.connected ? 'online' : 'idle',
+      os: 'Browser',
+      isSelf: false,
+    }))
+    setDevices(mapped)
+  }, [p2pPeers])
+
+  useEffect(() => {
+    if (p2pPeers !== undefined) return
     const sendPresence = async () => {
       try {
         const username = localStorage.getItem('pulsync_username') || ''
@@ -86,9 +110,10 @@ export function ConnectedDevices({
       clearInterval(presenceInterval)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [])
+  }, [p2pPeers])
 
   useEffect(() => {
+    if (p2pPeers !== undefined) return
     const fetchDevices = async () => {
       try {
         const res = await fetch(`${API_BASE_URL}/api/devices`)
@@ -112,7 +137,7 @@ export function ConnectedDevices({
     fetchDevices()
     const deviceInterval = setInterval(fetchDevices, 3000)
     return () => clearInterval(deviceInterval)
-  }, [selfIp])
+  }, [selfIp, p2pPeers])
 
   useEffect(() => {
     try {

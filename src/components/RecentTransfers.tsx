@@ -2,9 +2,33 @@ import { useEffect, useRef, useState } from 'react'
 import type { TransferItem } from '../types/index.ts'
 import { API_BASE_URL } from '../config'
 
+export interface LocalTransferFileView {
+  id: string
+  key: string
+  original_name: string
+  file_size: number
+  expires_at?: string
+  active_downloads: number
+  source_name: string
+  kind: 'published' | 'available' | 'received' | 'incoming'
+  can_download?: boolean
+  pending?: boolean
+  pending_stage?: string
+  receiving?: boolean
+  status_message?: string
+  status_level?: string
+  download_url?: string
+  progress?: number
+}
+
 interface RecentTransfersProps {
   transfers?: TransferItem[]
   onClearHistory?: () => void
+  localFiles?: LocalTransferFileView[]
+  onDownloadLocalFile?: (key: string) => void
+  onSaveReceivedFile?: (id: string) => void
+  onRemoveLocalFile?: (id: string) => void
+  onClearLocalFiles?: () => void
 }
 
 interface SharedFileItem {
@@ -89,13 +113,22 @@ function CountdownTimer({ expiresAt }: { expiresAt: string }) {
   return <span>{timeLeft}</span>
 }
 
-export function RecentTransfers({ onClearHistory }: RecentTransfersProps) {
+export function RecentTransfers({
+  onClearHistory,
+  localFiles,
+  onDownloadLocalFile,
+  onSaveReceivedFile,
+  onRemoveLocalFile,
+  onClearLocalFiles,
+}: RecentTransfersProps) {
+  const isLocalMode = localFiles !== undefined;
   const [sharedFiles, setSharedFiles] = useState<SharedFileItem[]>([])
   const [isClearing, setIsClearing] = useState(false)
   const [clearError, setClearError] = useState('')
   const requestVersion = useRef(0)
 
   useEffect(() => {
+    if (isLocalMode) return
     const fetchSharedFiles = async () => {
       const version = requestVersion.current
       try {
@@ -119,9 +152,13 @@ export function RecentTransfers({ onClearHistory }: RecentTransfersProps) {
     fetchSharedFiles()
     const interval = setInterval(fetchSharedFiles, 3000)
     return () => clearInterval(interval)
-  }, [])
+  }, [isLocalMode])
 
   const handleClear = async () => {
+    if (isLocalMode) {
+      if ((localFiles || []).some(file => file.kind === 'published')) onClearLocalFiles?.()
+      return
+    }
     if (isClearing || sharedFiles.length === 0) return
 
     setIsClearing(true)
@@ -167,15 +204,15 @@ export function RecentTransfers({ onClearHistory }: RecentTransfersProps) {
             <path d="M21 13v2a4 4 0 0 1-4 4H3" />
           </svg>
           <h2 className="panel-title">Berkas tersedia di Wi-Fi Lokal</h2>
-          <span className="panel-badge">{sharedFiles.length} Berkas</span>
+          <span className="panel-badge">{isLocalMode ? (localFiles?.length || 0) : sharedFiles.length} Berkas</span>
         </div>
-        {sharedFiles.length > 0 && (
+        {(isLocalMode ? (localFiles || []).some(file => file.kind === 'published') : sharedFiles.length > 0) && (
           <button
             type="button"
             className="action-btn"
             onClick={handleClear}
             disabled={isClearing}
-            title="Hapus semua berkas yang tersedia di jaringan lokal"
+            title="Hapus file sementara yang kamu sediakan"
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
@@ -188,7 +225,41 @@ export function RecentTransfers({ onClearHistory }: RecentTransfersProps) {
       {clearError && <p className="clear-files-error" role="status">{clearError}</p>}
 
       <div className="transfers-list">
-        {sharedFiles.map((file) => (
+        {isLocalMode && (localFiles || []).map((file) => (
+          <div key={`${file.kind}:${file.key}`} className="transfer-item">
+            <div className="transfer-top-row">
+              <div className="transfer-file-group">
+                <div className="transfer-file-icon"><FileTypeIcon fileName={file.original_name} /></div>
+                <div className="transfer-file-meta min-w-0 flex-1">
+                  <span className="transfer-file-name truncate break-all" title={file.original_name}>{file.original_name}</span>
+                  <div className="transfer-subtext">
+                    <span>{formatBytes(file.file_size)}</span><span>•</span><span>{file.source_name}</span>
+                    {file.expires_at && file.kind !== 'received' && <><span>•</span><span>Sisa waktu: <CountdownTimer expiresAt={file.expires_at} /></span></>}
+                    {file.kind === 'published' && <><span>•</span><span>{file.active_downloads} penerima aktif</span></>}
+                    {file.kind === 'incoming' && <><span>•</span><span>Menerima {file.progress || 0}%</span></>}
+                  </div>
+                </div>
+              </div>
+              <div className="transfer-status-group">
+                {file.kind === 'published' && (
+                  <button type="button" className="action-btn" onClick={() => onRemoveLocalFile?.(file.id)} title="Hapus file sementara">Hapus</button>
+                )}
+                {file.kind === 'available' && (
+                  <button type="button" className="action-btn" disabled={!file.can_download || file.pending || file.receiving} onClick={() => onDownloadLocalFile?.(file.key)}>
+                    {file.receiving ? 'Menerima…' : file.pending ? (file.pending_stage === 'preparing' ? 'Menyiapkan…' : 'Meminta…') : file.can_download ? 'Unduh' : 'Sumber offline'}
+                  </button>
+                )}
+                {file.kind === 'received' && file.download_url && (
+                  <button type="button" className="action-btn" onClick={() => onSaveReceivedFile?.(file.id)}>Simpan ke perangkat</button>
+                )}
+                {file.kind === 'incoming' && <span className="transfer-subtext">Sedang berlangsung</span>}
+              </div>
+            </div>
+            {file.kind === 'incoming' && <div className="staged-progress-track" style={{ marginTop: 10 }}><div className="staged-progress-fill" style={{ width: `${Math.max(0, Math.min(100, file.progress || 0))}%` }} /></div>}
+            {file.kind === 'available' && file.status_message && <div className={`local-file-status ${file.status_level || 'info'}`}>{file.status_message}</div>}
+          </div>
+        ))}
+        {!isLocalMode && sharedFiles.map((file) => (
           <div key={file.id} className="transfer-item">
             <div className="transfer-top-row">
               <div className="transfer-file-group">
@@ -232,14 +303,14 @@ export function RecentTransfers({ onClearHistory }: RecentTransfersProps) {
           </div>
         ))}
 
-        {sharedFiles.length === 0 && (
+        {(isLocalMode ? (localFiles || []).length === 0 : sharedFiles.length === 0) && (
           <div className="empty-state">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
               <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
               <line x1="9" y1="9" x2="15" y2="15" />
               <line x1="15" y1="9" x2="9" y2="15" />
             </svg>
-            <p>Belum ada berkas tersedia di jaringan Wi-Fi.</p>
+            <p>{isLocalMode ? 'Belum ada file sementara di jaringan lokal.' : 'Belum ada berkas tersedia di jaringan Wi-Fi.'}</p>
           </div>
         )}
       </div>

@@ -515,5 +515,6 @@ func main() {
 	mux.HandleFunc("/api/download/", downloadByIDHandler)
 	mux.HandleFunc("/api/presence", presenceHandler)
 	mux.HandleFunc("/api/devices", devicesHandler)
+	registerP2PRoutes(mux)
 	http.ListenAndServe("0.0.0.0:8080", corsMiddleware(mux))
 }

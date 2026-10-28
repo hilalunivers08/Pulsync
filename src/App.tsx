@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import './styles/index.css'
 import { PulsarBackground } from './components/PulsarBackground.tsx'
 import { FileDropzone } from './components/FileDropzone.tsx'
 import { ConnectedDevices } from './components/ConnectedDevices.tsx'
-import { RecentTransfers } from './components/RecentTransfers.tsx'
-import type { Device, TransferItem } from './types/index.ts'
+import { RecentTransfers, type LocalTransferFileView } from './components/RecentTransfers.tsx'
+import { LocalTransferWorkspace, type LocalTransferApi, type LocalTransferState } from './components/LocalTransferWorkspace.tsx'
+import type { Device } from './types/index.ts'
 import { API_BASE_URL } from './config'
 
 const SPACE_WORDS = ["Earth", "Mars", "Blackhole", "Europa", "Supernova", "Nebula", "Jupiter", "Andromeda", "Pulsar", "Voyager"]
@@ -20,6 +21,11 @@ function getInitialUsername() {
   return generated
 }
 
+const EMPTY_LOCAL_TRANSFER_STATE: LocalTransferState = {
+  status: 'Memulai…', peerID: '', displayName: '', peers: [], publishedFiles: [],
+  availableFiles: [], completedFiles: [], incomingTransfers: [], notice: null,
+}
+
 function App() {
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null)
   const [username, setUsername] = useState<string>(getInitialUsername())
@@ -27,87 +33,101 @@ function App() {
   const [showUsernameDialog, setShowUsernameDialog] = useState(false)
   const [usernameDraft, setUsernameDraft] = useState(username)
   const headerActionsRef = useRef<HTMLDivElement>(null)
+  const p2pApiRef = useRef<LocalTransferApi | null>(null)
+  const [p2pState, setP2pState] = useState<LocalTransferState>(EMPTY_LOCAL_TRANSFER_STATE)
   const [theme, setTheme] = useState<string>(() => {
     if (typeof window === 'undefined') return 'dark'
     return localStorage.getItem('pulsync_theme') || 'dark'
   })
-  const [transfers, setTransfers] = useState<TransferItem[]>([
-    {
-      id: 'tr-1',
-      fileName: 'design-system-v2.fig',
-      fileSize: '124.6 MB',
-      progress: 100,
-      status: 'completed',
-      direction: 'upload',
-      speed: '48.2 MB/s',
-      targetDevice: 'Workstation Alpha',
-      timestamp: '2 menit yang lalu',
-    },
-    {
-      id: 'tr-2',
-      fileName: 'docker-compose.production.yml',
-      fileSize: '4.8 KB',
-      progress: 100,
-      status: 'completed',
-      direction: 'download',
-      speed: '1.2 MB/s',
-      targetDevice: 'Home Server Linux',
-      timestamp: '8 menit yang lalu',
-    },
-    {
-      id: 'tr-3',
-      fileName: 'dataset_model_weights.bin',
-      fileSize: '1.85 GB',
-      progress: 68,
-      status: 'in_progress',
-      direction: 'upload',
-      speed: '54.1 MB/s',
-      targetDevice: 'Workstation Alpha',
-      timestamp: 'Sedang berlangsung',
-    },
-    {
-      id: 'tr-4',
-      fileName: 'raw_footage_4k_scene1.mp4',
-      fileSize: '4.20 GB',
-      progress: 32,
-      status: 'in_progress',
-      direction: 'download',
-      speed: '62.8 MB/s',
-      targetDevice: 'iPad Pro 11"',
-      timestamp: 'Sedang berlangsung',
-    },
-  ])
+
+
+  const localFiles = useMemo<LocalTransferFileView[]>(() => {
+    const published = p2pState.publishedFiles.map((file) => ({
+      id: file.id,
+      key: file.id,
+      original_name: file.name,
+      file_size: file.size,
+      expires_at: new Date(file.expiresAt).toISOString(),
+      active_downloads: file.activeRecipients,
+      source_name: 'Perangkat ini',
+      kind: 'published' as const,
+    }))
+    const available = p2pState.availableFiles.map((file) => ({
+      id: file.key,
+      key: file.key,
+      original_name: file.name,
+      file_size: file.size,
+      expires_at: new Date(file.expiresAt).toISOString(),
+      active_downloads: 0,
+      source_name: file.fromName,
+      kind: 'available' as const,
+      can_download: file.connected && !file.pending && !file.receiving,
+      pending: file.pending,
+      pending_stage: file.pendingStage,
+      receiving: file.receiving,
+      status_message: file.statusMessage,
+      status_level: file.statusLevel,
+    }))
+    const incoming = p2pState.incomingTransfers.map((file) => ({
+      id: file.id,
+      key: file.id,
+      original_name: file.name,
+      file_size: file.size,
+      active_downloads: 0,
+      source_name: file.fromName,
+      kind: 'incoming' as const,
+      progress: file.size === 0 ? 100 : Math.floor((file.received / file.size) * 100),
+    }))
+    const received = p2pState.completedFiles.map((file) => ({
+      id: file.id,
+      key: file.id,
+      original_name: file.name,
+      file_size: file.size,
+      active_downloads: 0,
+      source_name: `Diterima dari ${file.fromName}`,
+      kind: 'received' as const,
+      download_url: file.downloadUrl,
+    }))
+    return [...published, ...available, ...incoming, ...received]
+  }, [p2pState])
+
+  const handlePublishLocal = (file: File) => {
+    const api = p2pApiRef.current
+    if (!api) return { ok: false, message: 'Mesin transfer lokal sedang dimulai. Coba lagi sebentar.' }
+    return api.publishFile(file, selectedDevice?.id)
+  }
+
+  const handleDownloadLocal = (key: string) => {
+    const result = p2pApiRef.current?.downloadFile(key)
+    if (result && !result.ok) console.warn('[Pulsync] Gagal meminta file:', result.message)
+  }
+
+  const handleSaveReceivedFile = (id: string) => {
+    const result = p2pApiRef.current?.saveReceivedFile(id)
+    if (result && !result.ok) console.warn('[Pulsync] Gagal menyimpan berkas yang diterima:', result.message)
+  }
+
+  const handleRemoveLocal = (id: string) => {
+    p2pApiRef.current?.removePublishedFile(id)
+  }
+
+  const handleClearLocal = () => {
+    const api = p2pApiRef.current
+    if (!api) return
+    for (const file of p2pState.publishedFiles) api.removePublishedFile(file.id)
+  }
+
+  useEffect(() => {
+    if (selectedDevice && !p2pState.peers.some(peer => peer.id === selectedDevice.id)) {
+      setSelectedDevice(null)
+    }
+  }, [selectedDevice, p2pState.peers])
 
   const handleSelectDevice = (device: Device) => {
     setSelectedDevice(device)
   }
 
-  const handleSendFiles = (files: File[]) => {
-    const targetName = selectedDevice ? selectedDevice.name : 'Jaringan Lokal'
-    const newItems: TransferItem[] = files.map((file) => ({
-      id: `tr-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      fileName: file.name,
-      fileSize: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
-      progress: 0,
-      status: 'in_progress',
-      direction: 'upload',
-      speed: '— MB/s',
-      targetDevice: targetName,
-      timestamp: 'Sedang berlangsung',
-    }))
 
-    setTransfers((prev) => [...newItems, ...prev])
-  }
-
-  const handleUploadComplete = (fileName: string, fileSize: string, _rawSize: number) => {
-    setTransfers((prev) =>
-      prev.map((t) =>
-        t.fileName === fileName && t.status === 'in_progress'
-          ? { ...t, fileSize, progress: 100, status: 'completed', speed: '—', timestamp: 'Baru saja' }
-          : t
-      )
-    )
-  }
 
   const sendPresenceInstant = async () => {
     try {
@@ -266,24 +286,44 @@ function App() {
 
         <section>
           <FileDropzone
-            selectedDeviceName={selectedDevice ? selectedDevice.name : 'Semua Perangkat'}
-            onSendFiles={handleSendFiles}
-            onUploadComplete={handleUploadComplete}
+            selectedDeviceName={selectedDevice ? selectedDevice.name : 'Jaringan Lokal'}
+            transportMode="local"
+            onPublishLocal={handlePublishLocal}
           />
         </section>
+
+        {p2pState.notice && (
+          <div className={`local-transfer-notice is-${p2pState.notice.level || 'info'}`} role="status" aria-live="polite">
+            <span>{p2pState.notice.message}</span>
+            <button type="button" className="local-transfer-notice-dismiss" aria-label="Tutup notifikasi" onClick={() => p2pApiRef.current?.clearNotice()}>×</button>
+          </div>
+        )}
 
         <main className="dashboard-grid flex flex-col lg:flex-row w-full gap-4">
           <div className="w-full lg:w-1/2">
             <ConnectedDevices
+              p2pPeers={p2pState.peers}
               selectedDeviceId={selectedDevice?.id}
               onSelectDevice={handleSelectDevice}
             />
           </div>
           <div className="w-full lg:w-1/2">
-            <RecentTransfers transfers={transfers} />
+            <RecentTransfers
+              localFiles={localFiles}
+              onDownloadLocalFile={handleDownloadLocal}
+              onSaveReceivedFile={handleSaveReceivedFile}
+              onRemoveLocalFile={handleRemoveLocal}
+              onClearLocalFiles={handleClearLocal}
+            />
           </div>
         </main>
       </div>
+      <LocalTransferWorkspace
+        username={username}
+        theme={theme}
+        onState={setP2pState}
+        onApi={(api) => { p2pApiRef.current = api }}
+      />
       {showUsernameDialog && (
         <div
           className="username-dialog-backdrop"

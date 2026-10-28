@@ -1,0 +1,947 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pulsync — Local File Transfer PoC</title>
+  <style>
+    :root { color-scheme: dark; --bg:#111116; --panel:#1b1b23; --line:#373743; --text:#f4f1ff; --muted:#aaa8b7; --yellow:#f5db55; --purple:#a78bfa; --cyan:#67e8f9; --green:#77e0ad; --red:#ff8a8a; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:radial-gradient(ellipse at 10% 0%,#29213d 0,transparent 42%),var(--bg); color:var(--text); font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif; min-height:100vh; }
+    main { max-width:900px; padding:36px 18px 60px; margin:auto; }
+    header { display:flex; gap:14px; align-items:center; margin-bottom:24px; }
+    .mark { display:grid; place-items:center; width:48px;height:48px;border:2px solid var(--yellow);border-radius:15px;color:var(--yellow);font-size:25px;box-shadow:4px 4px 0 #755fd6; }
+    h1 { margin:0; font-size:25px; letter-spacing:.16em; } .sub { color:var(--muted);font-size:13px; }
+    .flag { margin-left:auto; padding:6px 10px;border:1px solid #7f6a23;color:var(--yellow);border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.08em; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+    .card { background:color-mix(in srgb,var(--panel) 92%,transparent); border:1px solid var(--line); border-radius:18px; padding:18px; box-shadow:0 12px 30px #0002; }
+    .card h2 { margin:0 0 12px; font-size:16px; }
+    .row { display:flex;gap:8px;align-items:center;justify-content:space-between; }
+    .pill { display:inline-flex;align-items:center;gap:7px;padding:5px 9px;background:#282833;border:1px solid var(--line);border-radius:999px;font-size:12px;color:var(--muted); }
+    .dot { width:7px;height:7px;border-radius:100%;background:var(--yellow);display:inline-block; }
+    .dot.good { background:var(--green); } .dot.bad { background:var(--red); }
+    .device { margin-top:10px;display:flex;gap:10px;align-items:center;padding:12px;border:1px solid var(--line);border-radius:12px;background:#ffffff03; }
+    .device-icon { width:36px;height:36px;display:grid;place-items:center;background:#302642;border-radius:10px;color:var(--purple);font-size:19px; }
+    .device-main { flex:1;min-width:0; } .device-name { font-weight:700;overflow-wrap:anywhere; } .device-status { font-size:12px;color:var(--muted); }
+    .empty { padding:22px 12px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:12px;margin-top:10px; }
+    .log { background:#0b0b10;border:1px solid #2d2d39;border-radius:12px;padding:10px;max-height:185px;overflow:auto;font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;color:#c9c6d7;white-space:pre-wrap;overflow-wrap:anywhere; }
+    .note { margin-top:16px; padding:13px 15px;border-left:3px solid var(--cyan);background:#67e8f90b;color:#c9c5d7;font-size:13px; }
+    .note strong { color:var(--cyan); } button { border:0;border-radius:10px;padding:9px 13px;background:var(--yellow);color:#1b1921;font-weight:800;cursor:pointer; } button.secondary { background:#292934;color:var(--text);border:1px solid var(--line); } button:disabled { opacity:.5;cursor:not-allowed; }
+    .actions { display:flex;gap:8px;flex-wrap:wrap;margin-top:12px; }
+    .small { font-size:12px;color:var(--muted); }
+    .transfer-grid { display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px; }
+    .field { display:flex;flex-direction:column;gap:6px;margin:10px 0; }
+    input[type=file], select { width:100%;min-width:0;padding:10px;background:#111118;color:var(--text);border:1px solid var(--line);border-radius:10px; }
+    .progress { width:100%;height:8px;accent-color:var(--yellow);margin-top:10px; }
+    .transfer-item { margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:12px;background:#ffffff03; }
+    .transfer-title { font-weight:750;overflow-wrap:anywhere; }
+    .transfer-meta { color:var(--muted);font-size:12px;margin-top:2px;overflow-wrap:anywhere; }
+    .transfer-status { color:var(--cyan);font-size:12px;margin-top:7px; }
+    .transfer-item progress { width:100%;height:7px;margin-top:7px;accent-color:var(--purple); }
+    .warn { color:#f0d986; }
+    details { margin-top:14px;padding-top:12px;border-top:1px solid var(--line); }
+    summary { cursor:pointer;color:var(--muted);font-size:13px;font-weight:700; }
+    .file-list { display:grid;gap:8px;margin-top:10px; }
+    .file-list .empty { margin-top:0; }
+    .file-actions { display:flex;gap:8px;flex-wrap:wrap;margin-top:8px; }
+    .file-expiry { color:var(--cyan);font-size:12px;margin-top:4px; }
+    @media(max-width:640px) { .grid,.transfer-grid{grid-template-columns:1fr} main{padding-top:22px}.flag{display:none} }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="mark" aria-hidden="true">✳</div>
+    <div><h1>PULSYNC</h1><div class="sub">Automatic discovery · Temporary local file sharing</div></div>
+    <div class="flag">EXPERIMENTAL POC</div>
+  </header>
+
+  <div class="grid">
+    <section class="card">
+      <div class="row"><h2>Perangkat ini</h2><span class="pill"><span id="statusDot" class="dot"></span><span id="statusText">Memulai…</span></span></div>
+      <div class="device">
+        <div class="device-icon">⌘</div>
+        <div class="device-main"><div class="device-name" id="selfName">Mendaftarkan perangkat…</div><div class="device-status" id="selfId"></div></div>
+      </div>
+      <div class="actions"><button id="retryBtn" class="secondary" type="button">Coba lagi</button><button id="clearLogBtn" class="secondary" type="button">Bersihkan log</button></div>
+      <p class="small">Untuk tes lokal, buka halaman ini di dua browser/perangkat. Tidak ada kode atau QR.</p>
+    </section>
+
+    <section class="card">
+      <div class="row"><h2>Perangkat yang ditemukan</h2><span class="pill" id="peerCount">0 ditemukan</span></div>
+      <div id="peerList"><div class="empty">Mencari perangkat lain…</div></div>
+    </section>
+  </div>
+
+  <section class="card" style="margin-top:14px">
+    <div class="row"><h2>File sementara di LAN</h2><span class="pill">maks. 25 MiB · 10 menit</span></div>
+    <div class="transfer-grid" style="margin-top:12px">
+      <div>
+        <label class="field" for="fileInput"><strong>Pilih file untuk disediakan</strong><input id="fileInput" type="file" /></label>
+        <button id="publishFileBtn" type="button" disabled>Sediakan 10 menit</button>
+        <div id="outgoingStatus" class="transfer-status" aria-live="polite">Pilih file setelah perangkat terhubung.</div>
+        <progress id="outgoingProgress" class="progress" value="0" max="100" hidden></progress>
+        <div class="small" style="margin-top:8px">File tetap berada di tab pengirim. Penerima dapat meminta unduhan kapan saja selama sumber masih aktif dan file belum kedaluwarsa.</div>
+        <details>
+          <summary>Uji kirim langsung (mode lama)</summary>
+          <label class="field" for="peerSelect"><strong>Kirim langsung ke perangkat</strong><select id="peerSelect" disabled><option value="">Menunggu koneksi langsung…</option></select></label>
+          <button id="sendFileBtn" type="button" disabled>Kirim langsung</button>
+        </details>
+      </div>
+      <div>
+        <strong>File dari perangkat lain</strong>
+        <div id="availableFilesList" class="file-list"><div class="empty">Belum ada file yang disediakan perangkat lain.</div></div>
+      </div>
+    </div>
+    <div class="transfer-grid" style="margin-top:16px">
+      <div>
+        <strong>File yang kamu sediakan</strong>
+        <div id="publishedFilesList" class="file-list"><div class="empty">Belum ada file sementara.</div></div>
+      </div>
+      <div>
+        <strong>Transfer diterima</strong>
+        <div id="incomingList" class="file-list"><div class="empty">Belum ada file diterima.</div></div>
+      </div>
+    </div>
+    <div class="note"><strong>Catatan PoC:</strong> isi file tidak diunggah ke server. File yang kamu sediakan dirujuk langsung dari tab pengirim selama maksimal 10 menit. Jika setidaknya satu penerima sudah menerima daftar file, lalu tidak ada penerima yang tersambung selama 10 detik, file dihapus lebih awal. Jika pengirim menutup halaman atau perangkatnya offline, sumber file tidak tersedia.</div>
+  </section>
+
+  <section class="card" style="margin-top:14px">
+    <div class="row"><h2>Log eksperimen</h2><span class="small">Server hanya menukar metadata signaling; isi file tidak melewati server.</span></div>
+    <div id="log" class="log" aria-live="polite">Booting…</div>
+    <div class="note"><strong>Catatan penting:</strong> server hanya menukar metadata discovery/signaling; isi file dikirim melalui WebRTC DataChannel. PoC memakai kandidat host lokal/private tanpa STUN/TURN, tetapi ini bukan bukti mutlak bahwa dua perangkat berada pada SSID atau segmen LAN yang sama. File sementara disediakan dari tab pengirim, bukan penyimpanan cloud.</div>
+  </section>
+</main>
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const api = (path) => path;
+
+  // Report startup errors in the page itself; this is especially useful when
+  // opening the PoC from another device over http://<LAN-IP>:8081.
+  window.addEventListener('error', (event) => {
+    const status = $('statusText');
+    const logEl = $('log');
+    if (status && status.textContent === 'Memulai…') status.textContent = 'Kesalahan JavaScript';
+    if (logEl) {
+      const line = `[${new Date().toLocaleTimeString()}] JavaScript: ${event.message || 'kesalahan tidak diketahui'}`;
+      logEl.textContent = (logEl.textContent === 'Booting…' ? '' : logEl.textContent + '\n') + line;
+    }
+    console.error('[Pulsync PoC] JavaScript error:', event.message, event.filename, event.lineno);
+  });
+  window.addEventListener('unhandledrejection', (event) => {
+    const status = $('statusText');
+    const logEl = $('log');
+    const reason = event.reason?.message || String(event.reason || 'promise rejected');
+    if (status && status.textContent === 'Memulai…') status.textContent = 'Kesalahan startup';
+    if (logEl) {
+      const line = `[${new Date().toLocaleTimeString()}] Startup promise: ${reason}`;
+      logEl.textContent = (logEl.textContent === 'Booting…' ? '' : logEl.textContent + '\n') + line;
+    }
+    console.error('[Pulsync PoC] Unhandled promise rejection:', reason);
+  });
+
+  function makePeerID() {
+    // crypto.randomUUID() is restricted to secure contexts in browsers.
+    // A LAN IP served over HTTP may not be secure, so keep the PoC usable there.
+    if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
+      return globalThis.crypto.randomUUID();
+    }
+    const bytes = new Uint8Array(16);
+    if (globalThis.crypto && typeof globalThis.crypto.getRandomValues === 'function') {
+      globalThis.crypto.getRandomValues(bytes);
+    } else {
+      for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+    }
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+  }
+  const peerID = (sessionStorage.getItem('pulsync_poc_peer_id') || makePeerID()).replace(/[^a-zA-Z0-9-]/g, '');
+  sessionStorage.setItem('pulsync_poc_peer_id', peerID);
+  const firstWords = ['Pulsar','Nebula','Europa','Voyager','Andromeda','Nova'];
+  const displayName = sessionStorage.getItem('pulsync_poc_name') || `${firstWords[Math.floor(Math.random()*firstWords.length)]}-${Math.floor(1000+Math.random()*9000)}`;
+  sessionStorage.setItem('pulsync_poc_name', displayName);
+  $('selfName').textContent = displayName;
+  $('selfId').textContent = `ID tab: ${peerID.slice(0,8)}…`;
+
+  let running = true;
+  const peers = new Map();
+  const connections = new Map();
+  const seenSignals = new Set();
+  let intervals = [];
+  const MAX_FILE_BYTES = 25 * 1024 * 1024;
+  const MAX_RETAINED_BYTES = 50 * 1024 * 1024;
+  const MAX_PUBLISHED_BYTES = 50 * 1024 * 1024;
+  const CHUNK_BYTES = 16 * 1024;
+  const TEMP_FILE_TTL_MS = 10 * 60 * 1000;
+  const INACTIVE_DELETE_MS = 10 * 1000;
+  const outgoingByPeer = new Set();
+  const outgoingTransfers = new Map();
+  const incomingFiles = new Map();
+  const publishedFiles = new Map(); // Local File objects; never uploaded to the server.
+  const availableFiles = new Map(); // Remote metadata only.
+  const pendingDownloads = new Map();
+  let completedFiles = [];
+  let selectedFile = null;
+
+  function log(message, level='info') {
+    const time = new Date().toLocaleTimeString();
+    const line = `[${time}] ${message}`;
+    const el = $('log');
+    el.textContent = (el.textContent === 'Booting…' ? '' : el.textContent + '\n') + line;
+    el.scrollTop = el.scrollHeight;
+    console[level === 'error' ? 'error' : 'log']('[Pulsync PoC]', message);
+  }
+  function setStatus(text, good=false) {
+    $('statusText').textContent = text;
+    $('statusDot').className = 'dot' + (good ? ' good' : '');
+  }
+  async function request(path, options={}) {
+    const response = await fetch(api(path), {cache:'no-store', ...options, headers:{'Content-Type':'application/json', ...(options.headers||{})}});
+    if (!response.ok) {
+      let body = {};
+      try { body = await response.json(); } catch {}
+      throw new Error(body.error || `${response.status} ${response.statusText}`);
+    }
+    return response.status === 204 ? null : response.json();
+  }
+  function isAllowedLocalAddress(address) {
+    const value = String(address || '').toLowerCase().replace(/^\[|\]$/g, '');
+    if (value.endsWith('.local')) return true;
+    // IPv4 private and link-local ranges. Public IPv4 is intentionally excluded.
+    const m = value.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (m) {
+      const a=+m[1], b=+m[2], c=+m[3], d=+m[4];
+      if ([a,b,c,d].some(n => n < 0 || n > 255)) return false;
+      return a===10 || (a===172 && b>=16 && b<=31) || (a===192 && b===168) || (a===169 && b===254);
+    }
+    // IPv6 link-local and unique-local only; do not exchange global IPv6 candidates.
+    return value.startsWith('fe8') || value.startsWith('fe9') || value.startsWith('fea') || value.startsWith('feb') || value.startsWith('fc') || value.startsWith('fd');
+  }
+  function filterLocalSDP(sdp) {
+    const lines = sdp.split(/\r?\n/);
+    const kept = [];
+    let removed = 0, keptCandidates = 0;
+    for (const line of lines) {
+      if (!line.startsWith('a=candidate:')) { kept.push(line); continue; }
+      const bits = line.slice(2).split(/\s+/); // candidate:<foundation> component transport priority address port typ type...
+      const address = bits[4] || '';
+      const typIndex = bits.indexOf('typ');
+      const candidateType = typIndex >= 0 ? bits[typIndex+1] : '';
+      if (candidateType === 'host' && isAllowedLocalAddress(address)) {
+        kept.push(line); keptCandidates++;
+      } else {
+        removed++;
+      }
+    }
+    return {sdp:kept.join('\r\n'), keptCandidates, removed};
+  }
+  function waitForICE(pc, timeout=7000) {
+    if (pc.iceGatheringState === 'complete') return Promise.resolve();
+    return new Promise(resolve => {
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true; clearTimeout(timer); pc.removeEventListener('icegatheringstatechange', check); resolve();
+      };
+      const check = () => { if (pc.iceGatheringState === 'complete') finish(); };
+      const timer = setTimeout(finish, timeout);
+      pc.addEventListener('icegatheringstatechange', check);
+    });
+  }
+  function newConnection(peer) {
+    const pc = new RTCPeerConnection({iceServers:[], iceCandidatePoolSize:0});
+    const info = {pc, channel:null, state:'connecting', peer, createdAt:Date.now()};
+    connections.set(peer.id, info);
+    pc.onconnectionstatechange = () => {
+      const state = pc.connectionState;
+      info.state = state;
+      log(`Koneksi ke ${peer.name}: ${state}`);
+      renderPeers();
+      renderAvailableFiles(); renderPublishedFiles();
+      if (state === 'failed' || state === 'closed' || state === 'disconnected') {
+        if (state !== 'disconnected') {
+          try { pc.close(); } catch {}
+          connections.delete(peer.id);
+          renderPeers();
+        }
+      }
+    };
+    pc.ondatachannel = event => attachChannel(info, event.channel);
+    return info;
+  }
+  function attachChannel(info, channel) {
+    info.channel = channel;
+    channel.binaryType = 'arraybuffer';
+    channel.bufferedAmountLowThreshold = 256 * 1024;
+    channel.onopen = () => {
+      info.state = 'connected';
+      channel.send(JSON.stringify({type:'poc-hello', name:displayName, id:peerID}));
+      sendPublishedCatalogToPeer(info);
+      log(`LAN candidate connection terbuka dengan ${info.peer.name}.`);
+      renderPeers();
+      renderAvailableFiles();
+      renderPublishedFiles();
+    };
+    channel.onmessage = event => { void handleChannelMessage(info, event.data); };
+    channel.onclose = () => {
+      info.state = 'disconnected';
+      for (const [transferID, transfer] of incomingFiles) {
+        if (transfer.peerID === info.peer.id) incomingFiles.delete(transferID);
+      }
+      for (const [key, item] of availableFiles) {
+        if (item.peerID === info.peer.id) availableFiles.delete(key);
+      }
+      for (const [requestID, request] of pendingDownloads) {
+        if (request.peerID === info.peer.id) { clearTimeout(request.timer); pendingDownloads.delete(requestID); }
+      }
+      renderIncomingFiles(); renderAvailableFiles(); renderPublishedFiles(); renderPeers(); renderTransferControls();
+      for (const [transferID, pending] of outgoingTransfers) {
+        if (pending.peerID !== info.peer.id) continue;
+        clearTimeout(pending.readyTimer); clearTimeout(pending.ackTimer); outgoingTransfers.delete(transferID);
+        const error = new Error('Koneksi data terputus');
+        if (pending.phase === 'waiting-ready') pending.readyReject(error);
+        else if (pending.ackReject) pending.ackReject(error);
+      }
+    };
+    renderTransferControls();
+  }
+  function cleanIncomingName(name) {
+    const cleaned = String(name || 'file.bin').replace(/[\\/]/g, '_').replace(/[\u0000-\u001f\u007f]/g, '').trim();
+    return (cleaned || 'file.bin').slice(0, 180);
+  }
+  function formatBytes(bytes) {
+    if (!Number.isFinite(bytes) || bytes < 0) return 'ukuran tidak diketahui';
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ['KiB','MiB','GiB'];
+    let value = bytes / 1024, index = 0;
+    while (value >= 1024 && index < units.length - 1) { value /= 1024; index++; }
+    return `${value.toFixed(value >= 10 ? 1 : 2)} ${units[index]}`;
+  }
+  function transferStatus(text, level='info') {
+    const el = $('outgoingStatus');
+    el.textContent = text;
+    el.style.color = level === 'error' ? 'var(--red)' : level === 'success' ? 'var(--green)' : 'var(--cyan)';
+  }
+  function catalogKey(peerIDValue, fileID) { return `${peerIDValue}:${fileID}`; }
+  function connectedInfo(peerIDValue) {
+    const info = connections.get(peerIDValue);
+    return info && info.channel && info.channel.readyState === 'open' && info.pc.connectionState === 'connected' ? info : null;
+  }
+  function publishedBytes() {
+    return [...publishedFiles.values()].reduce((total, item) => total + item.size, 0);
+  }
+  function formatRemaining(milliseconds) {
+    const seconds = Math.max(0, Math.ceil(milliseconds / 1000));
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  }
+  function renderTransferControls() {
+    const select = $('peerSelect');
+    if (!select) return;
+    const previous = select.value;
+    const connected = [...connections.entries()].filter(([, info]) => info.channel && info.channel.readyState === 'open' && info.pc.connectionState === 'connected').map(([id, info]) => ({id, name:info.peer.name}));
+    select.replaceChildren();
+    if (!connected.length) {
+      const option = document.createElement('option'); option.value = ''; option.textContent = 'Menunggu koneksi langsung…'; select.append(option);
+      select.disabled = true;
+    } else {
+      for (const peer of connected) {
+        const option = document.createElement('option'); option.value = peer.id; option.textContent = peer.name; select.append(option);
+      }
+      select.disabled = false;
+      if (connected.some(peer => peer.id === previous)) select.value = previous;
+    }
+    $('sendFileBtn').disabled = !selectedFile || selectedFile.size > MAX_FILE_BYTES || !select.value || outgoingByPeer.has(select.value);
+    const selectedAlreadyPublished = selectedFile && [...publishedFiles.values()].some(item => item.file === selectedFile);
+    $('publishFileBtn').disabled = !selectedFile || selectedFile.size > MAX_FILE_BYTES || selectedAlreadyPublished || (publishedBytes() + (selectedAlreadyPublished ? 0 : selectedFile?.size || 0)) > MAX_PUBLISHED_BYTES;
+  }
+  function sendCatalogEntry(info, item) {
+    if (!info?.channel || info.channel.readyState !== 'open' || Date.now() >= item.expiresAt) return false;
+    try {
+      const now = Date.now();
+      info.channel.send(JSON.stringify({type:'file-published', fileId:item.id, name:item.name, size:item.size, mimeType:item.mimeType, ageMs:Math.max(0, now-item.publishedAt), ttlMs:Math.max(0, item.expiresAt-now)}));
+      item.announcedTo.add(info.peer.id);
+      item.inactiveSince = null;
+      return true;
+    } catch (error) {
+      log(`Gagal menerbitkan ${item.name} ke ${info.peer.name}: ${error.message}`, 'error');
+      return false;
+    }
+  }
+  function sendPublishedCatalogToPeer(info) {
+    for (const item of publishedFiles.values()) sendCatalogEntry(info, item);
+    renderPublishedFiles();
+  }
+  function renderPublishedFiles() {
+    const container = $('publishedFilesList');
+    if (!container) return;
+    container.replaceChildren();
+    const items = [...publishedFiles.values()].sort((a,b) => a.publishedAt - b.publishedAt);
+    if (!items.length) {
+      container.innerHTML = '<div class="empty">Belum ada file sementara.</div>';
+      renderTransferControls();
+      return;
+    }
+    const now = Date.now();
+    for (const item of items) {
+      const card = document.createElement('div'); card.className='transfer-item';
+      const title = document.createElement('div'); title.className='transfer-title'; title.textContent=item.name;
+      const meta = document.createElement('div'); meta.className='transfer-meta'; meta.textContent=`${formatBytes(item.size)} · disediakan ${new Date(item.publishedAt).toLocaleTimeString()}`;
+      const activeRecipients = [...item.announcedTo].filter(id => !!connectedInfo(id)).length;
+      const expiry = document.createElement('div'); expiry.className='file-expiry';
+      if (item.inactiveSince !== null) expiry.textContent=`Tidak ada penerima aktif · dihapus dalam ${formatRemaining(INACTIVE_DELETE_MS - (now - item.inactiveSince))}`;
+      else expiry.textContent=`Kedaluwarsa dalam ${formatRemaining(item.expiresAt - now)} · ${activeRecipients} penerima aktif`;
+      const actions = document.createElement('div'); actions.className='file-actions';
+      const remove = document.createElement('button'); remove.type='button'; remove.className='secondary'; remove.textContent='Hapus sekarang';
+      remove.addEventListener('click', () => expirePublishedFile(item.id, 'Dihapus oleh pengirim'));
+      actions.append(remove); card.append(title,meta,expiry,actions); container.append(card);
+    }
+    renderTransferControls();
+  }
+  function renderAvailableFiles() {
+    const container = $('availableFilesList');
+    if (!container) return;
+    const now = Date.now();
+    for (const [key, item] of availableFiles) if (item.expiresAt <= now) availableFiles.delete(key);
+    container.replaceChildren();
+    const items = [...availableFiles.entries()].sort((a,b) => a[1].publishedAt - b[1].publishedAt);
+    if (!items.length) {
+      container.innerHTML = '<div class="empty">Belum ada file yang disediakan perangkat lain.</div>';
+      return;
+    }
+    for (const [key, item] of items) {
+      const card = document.createElement('div'); card.className='transfer-item';
+      const title = document.createElement('div'); title.className='transfer-title'; title.textContent=item.name;
+      const meta = document.createElement('div'); meta.className='transfer-meta'; meta.textContent=`${formatBytes(item.size)} · dari ${item.fromName}`;
+      const pending = [...pendingDownloads.values()].some(request => request.key === key);
+      const receiving = [...incomingFiles.values()].some(transfer => transfer.catalogKey === key);
+      const info = connectedInfo(item.peerID);
+      const expiry = document.createElement('div'); expiry.className='file-expiry'; expiry.textContent=`Kedaluwarsa dalam ${formatRemaining(item.expiresAt - now)}`;
+      const button = document.createElement('button'); button.type='button'; button.textContent = !info ? 'Sumber offline' : (pending ? 'Meminta file…' : receiving ? 'Menerima…' : 'Ambil file');
+      button.disabled = !info || pending || receiving || item.expiresAt <= now;
+      button.addEventListener('click', () => requestFileDownload(key, item));
+      card.append(title,meta,expiry,button); container.append(card);
+    }
+  }
+  function expirePublishedFile(fileID, reason='File kedaluwarsa') {
+    const item = publishedFiles.get(fileID);
+    if (!item) return;
+    const message = JSON.stringify({type:'file-removed', fileId:fileID, reason});
+    for (const info of connections.values()) {
+      if (info.channel?.readyState === 'open') { try { info.channel.send(message); } catch {} }
+    }
+    publishedFiles.delete(fileID);
+    if (selectedFile === item.file) { selectedFile = null; $('fileInput').value = ''; }
+    log(`${item.name} dihapus dari daftar sementara: ${reason}.`);
+    renderPublishedFiles();
+    renderTransferControls();
+  }
+  function maintainTemporaryFiles() {
+    const now = Date.now();
+    for (const [fileID, item] of publishedFiles) {
+      if (now >= item.expiresAt) {
+        expirePublishedFile(fileID, 'Masa berlaku 10 menit habis');
+        continue;
+      }
+      // If no peer has ever received this catalog entry, keep it until TTL so a later recipient can find it.
+      if (item.announcedTo.size === 0) continue;
+      const active = [...item.announcedTo].some(id => !!connectedInfo(id));
+      if (active) item.inactiveSince = null;
+      else if (item.inactiveSince === null) item.inactiveSince = now;
+      else if (now - item.inactiveSince >= INACTIVE_DELETE_MS) {
+        expirePublishedFile(fileID, 'Semua penerima tidak aktif selama 10 detik');
+      }
+    }
+    renderPublishedFiles();
+    renderAvailableFiles();
+  }
+  function publishSelectedFile() {
+    const file = selectedFile;
+    if (!file) { transferStatus('Pilih file terlebih dahulu.', 'error'); return; }
+    if (file.size > MAX_FILE_BYTES) { transferStatus(`File terlalu besar. Maksimal ${formatBytes(MAX_FILE_BYTES)}.`, 'error'); return; }
+    if ([...publishedFiles.values()].some(item => item.file === file)) { transferStatus('File ini sudah tersedia.', 'error'); return; }
+    if (publishedBytes() + file.size > MAX_PUBLISHED_BYTES) { transferStatus(`Batas total file sementara ${formatBytes(MAX_PUBLISHED_BYTES)} tercapai.`, 'error'); return; }
+    const now = Date.now();
+    const item = {id:makePeerID(), file, name:cleanIncomingName(file.name), size:file.size, mimeType:file.type || 'application/octet-stream', publishedAt:now, expiresAt:now + TEMP_FILE_TTL_MS, announcedTo:new Set(), inactiveSince:null};
+    publishedFiles.set(item.id, item);
+    for (const info of connections.values()) sendCatalogEntry(info, item);
+    transferStatus(`${item.name} tersedia hingga 10 menit selama sumber aktif.`, 'success');
+    log(`File diterbitkan secara lokal: ${item.name} (${formatBytes(item.size)}). Isi file tidak diunggah ke server.`);
+    renderPublishedFiles(); renderAvailableFiles();
+  }
+  async function requestFileDownload(key, item) {
+    const info = connectedInfo(item.peerID);
+    if (!info) { log(`Sumber ${item.fromName} sedang offline.`, 'error'); renderAvailableFiles(); return; }
+    if (item.expiresAt <= Date.now()) { availableFiles.delete(key); renderAvailableFiles(); return; }
+    if ([...pendingDownloads.values()].some(request => request.key === key)) return;
+    const transferId = makePeerID();
+    const pending = {transferId, key, fileID:item.fileID, peerID:item.peerID, name:item.name, timer:null};
+    pending.timer = setTimeout(() => {
+      if (pendingDownloads.get(transferId) !== pending) return;
+      pendingDownloads.delete(transferId);
+      renderAvailableFiles();
+      log(`Permintaan unduhan ${item.name} tidak mendapat respons.`, 'error');
+    }, 20000);
+    pendingDownloads.set(transferId, pending);
+    renderAvailableFiles();
+    try {
+      info.channel.send(JSON.stringify({type:'file-request', fileId:item.fileID, transferId}));
+      log(`Meminta unduhan ${item.name} dari ${item.fromName}.`);
+    } catch (error) {
+      clearTimeout(pending.timer); pendingDownloads.delete(transferId); renderAvailableFiles();
+      log(`Tidak bisa meminta ${item.name}: ${error.message}`, 'error');
+    }
+  }
+  function renderIncomingFiles() {
+    const container = $('incomingList');
+    container.replaceChildren();
+    const active = [...incomingFiles.values()].sort((a,b) => a.startedAt - b.startedAt);
+    if (!active.length && !completedFiles.length) {
+      container.innerHTML = '<div class="empty">Belum ada file diterima.</div>';
+      return;
+    }
+    for (const transfer of active) {
+      const card = document.createElement('div'); card.className = 'transfer-item';
+      const title = document.createElement('div'); title.className = 'transfer-title'; title.textContent = transfer.name;
+      const meta = document.createElement('div'); meta.className = 'transfer-meta'; meta.textContent = `${formatBytes(transfer.size)} · dari ${transfer.fromName}`;
+      const status = document.createElement('div'); status.className = 'transfer-status'; status.textContent = transfer.status || `Menerima ${formatBytes(transfer.received)} dari ${formatBytes(transfer.size)}…`;
+      const progress = document.createElement('progress'); progress.max = 100; progress.value = transfer.size === 0 ? 100 : Math.min(100, transfer.received / transfer.size * 100);
+      card.append(title, meta, status, progress); container.append(card);
+    }
+    for (const file of completedFiles) {
+      const card = document.createElement('div'); card.className = 'transfer-item';
+      const title = document.createElement('div'); title.className = 'transfer-title'; title.textContent = file.name;
+      const meta = document.createElement('div'); meta.className = 'transfer-meta'; meta.textContent = `${formatBytes(file.size)} · dari ${file.fromName} · transfer selesai`;
+      const button = document.createElement('button'); button.type = 'button'; button.style.marginTop = '9px'; button.textContent = 'Simpan ke perangkat';
+      button.addEventListener('click', () => {
+        const link = document.createElement('a'); link.href = file.url; link.download = file.name; link.rel = 'noopener';
+        document.body.append(link); link.click(); link.remove();
+      });
+      card.append(title, meta, button); container.append(card);
+    }
+  }
+  function renderIncomingProgress(_transfer) {
+    renderIncomingFiles();
+  }
+  async function handleChannelMessage(info, data) {
+    if (typeof data !== 'string') {
+      const transfer = [...incomingFiles.values()].find(item => item.peerID === info.peer.id);
+      if (!transfer) { log(`Data biner tidak terduga dari ${info.peer.name}; diabaikan.`, 'error'); return; }
+      const bytes = data instanceof ArrayBuffer ? data : data instanceof Blob ? await data.arrayBuffer() : null;
+      if (!bytes) { log(`Jenis data biner tidak didukung dari ${info.peer.name}.`, 'error'); return; }
+      if (transfer.received + bytes.byteLength > transfer.size) {
+        incomingFiles.delete(transfer.id);
+        transfer.status = 'Data melebihi ukuran yang diumumkan';
+        renderIncomingProgress(transfer);
+        try { info.channel.send(JSON.stringify({type:'file-reject', transferId:transfer.id, reason:'Ukuran data melebihi metadata'})); } catch {}
+        log(`Transfer ${transfer.name} ditolak karena ukuran data berlebih.`, 'error');
+        return;
+      }
+      transfer.chunks.push(bytes);
+      transfer.received += bytes.byteLength;
+      renderIncomingProgress(transfer);
+      return;
+    }
+    let message;
+    try { message = JSON.parse(data); } catch { log(`Pesan teks tidak dikenal dari ${info.peer.name}.`, 'error'); return; }
+    if (message.type === 'poc-hello') {
+      log(`Handshake data channel diterima dari ${message.name}.`);
+    } else if (message.type === 'file-published') {
+      const fileID = String(message.fileId || '');
+      const size = Number(message.size);
+      const ttlMs = Number(message.ttlMs);
+      const ageMs = Number(message.ageMs);
+      if (!fileID || fileID.length > 100 || !Number.isSafeInteger(size) || size < 0 || size > MAX_FILE_BYTES || !Number.isFinite(ttlMs) || ttlMs <= 0 || ttlMs > TEMP_FILE_TTL_MS || !Number.isFinite(ageMs) || ageMs < 0 || ageMs > TEMP_FILE_TTL_MS) {
+        log(`Metadata file sementara dari ${info.peer.name} tidak valid; diabaikan.`, 'error');
+        return;
+      }
+      const key = catalogKey(info.peer.id, fileID);
+      const receivedAt = Date.now();
+      availableFiles.set(key, {key, fileID, peerID:info.peer.id, fromName:info.peer.name, name:cleanIncomingName(message.name), size, mimeType:String(message.mimeType || 'application/octet-stream').slice(0,120), publishedAt:receivedAt-ageMs, expiresAt:receivedAt+ttlMs});
+      renderAvailableFiles();
+      log(`File tersedia dari ${info.peer.name}: ${cleanIncomingName(message.name)} (${formatBytes(size)}).`);
+    } else if (message.type === 'file-removed') {
+      const key = catalogKey(info.peer.id, String(message.fileId || ''));
+      const removed = availableFiles.get(key);
+      availableFiles.delete(key);
+      for (const [requestID, request] of pendingDownloads) {
+        if (request.key === key) { clearTimeout(request.timer); pendingDownloads.delete(requestID); }
+      }
+      renderAvailableFiles();
+      if (removed) log(`File ${removed.name} tidak lagi tersedia: ${String(message.reason || 'sumber menghapus file')}.`);
+    } else if (message.type === 'file-request') {
+      const fileID = String(message.fileId || '');
+      const transferId = String(message.transferId || '');
+      const item = publishedFiles.get(fileID);
+      let rejection = '';
+      if (!transferId || transferId.length > 100 || !fileID || fileID.length > 100) rejection = 'Permintaan unduhan tidak valid';
+      else if (!item || Date.now() >= item.expiresAt) rejection = 'File sudah kedaluwarsa atau tidak tersedia';
+      else if (!item.announcedTo.has(info.peer.id)) rejection = 'File tidak tersedia untuk perangkat ini';
+      else if (outgoingByPeer.has(info.peer.id)) rejection = 'Perangkat ini sedang menerima transfer lain';
+      if (rejection) {
+        try { info.channel.send(JSON.stringify({type:'file-reject', transferId, reason:rejection})); } catch {}
+        log(`Permintaan file dari ${info.peer.name} ditolak: ${rejection}.`, 'error');
+        return;
+      }
+      log(`${info.peer.name} meminta ${item.name}; mengirim file langsung melalui DataChannel.`);
+      void sendFileToPeer(info, item.file, transferId, item.id);
+    } else if (message.type === 'file-start') {
+      const size = Number(message.size);
+      const transferId = typeof message.transferId === 'string' ? message.transferId : '';
+      const retainedBytes = completedFiles.reduce((total, file) => total + file.size, 0) + [...incomingFiles.values()].reduce((total, item) => total + item.size, 0);
+      const duplicatePeerTransfer = [...incomingFiles.values()].some(item => item.peerID === info.peer.id);
+      let rejection = '';
+      if (!transferId || transferId.length > 100 || !Number.isSafeInteger(size) || size < 0 || size > MAX_FILE_BYTES) rejection = `Ukuran file harus maksimal ${formatBytes(MAX_FILE_BYTES)} atau metadata tidak valid`;
+      else if (duplicatePeerTransfer) rejection = 'Satu transfer per perangkat diizinkan pada PoC ini';
+      else if (retainedBytes + size > MAX_RETAINED_BYTES) rejection = `Batas total file sementara ${formatBytes(MAX_RETAINED_BYTES)} tercapai`;
+      if (rejection) {
+        try { info.channel.send(JSON.stringify({type:'file-reject', transferId, reason:rejection})); } catch {}
+        log(`File dari ${info.peer.name} ditolak: ${rejection}.`, 'error');
+        return;
+      }
+      const pendingDownload = pendingDownloads.get(transferId);
+      if (pendingDownload && pendingDownload.peerID === info.peer.id) {
+        clearTimeout(pendingDownload.timer);
+        pendingDownloads.delete(transferId);
+      }
+      const publishedFileID = String(message.publishedFileId || pendingDownload?.fileID || '');
+      const transfer = {id:transferId, peerID:info.peer.id, fromName:info.peer.name, name:cleanIncomingName(message.name), size, mimeType:String(message.mimeType || 'application/octet-stream').slice(0,120), received:0, chunks:[], status:'Menerima…', startedAt:Date.now(), catalogKey:publishedFileID ? catalogKey(info.peer.id, publishedFileID) : ''};
+      incomingFiles.set(transfer.id, transfer);
+      renderAvailableFiles();
+      renderIncomingProgress(transfer);
+      try { info.channel.send(JSON.stringify({type:'file-ready', transferId:transfer.id, maxBytes:MAX_FILE_BYTES})); }
+      catch (error) { incomingFiles.delete(transfer.id); renderIncomingFiles(); log(`Tidak bisa menerima transfer dari ${info.peer.name}: ${error.message}`, 'error'); return; }
+      log(`Siap menerima ${transfer.name} (${formatBytes(size)}) dari ${info.peer.name}.`);
+    } else if (message.type === 'file-end') {
+      const transfer = incomingFiles.get(String(message.transferId || ''));
+      if (!transfer || transfer.peerID !== info.peer.id) return;
+      if (transfer.received !== transfer.size) {
+        transfer.status = `Gagal: ukuran diterima ${formatBytes(transfer.received)} dari ${formatBytes(transfer.size)}`;
+        renderIncomingProgress(transfer);
+        incomingFiles.delete(transfer.id);
+        log(`Transfer ${transfer.name} tidak lengkap; file tidak ditawarkan untuk diunduh.`, 'error');
+        return;
+      }
+      const blob = new Blob(transfer.chunks, {type:transfer.mimeType});
+      const file = {id:transfer.id, name:transfer.name, size:transfer.size, fromName:transfer.fromName, blob, url:URL.createObjectURL(blob), catalogKey:transfer.catalogKey, receivedAt:Date.now()};
+      completedFiles.unshift(file);
+      incomingFiles.delete(transfer.id);
+      renderIncomingFiles(); renderAvailableFiles();
+      try { info.channel.send(JSON.stringify({type:'file-ack', transferId:transfer.id, size:transfer.size})); } catch {}
+      log(`Transfer selesai: ${transfer.name} (${formatBytes(transfer.size)}). Klik Simpan ke perangkat untuk menyimpan salinan lokal.`);
+    } else if (message.type === 'file-ready') {
+      const pending = outgoingTransfers.get(String(message.transferId || ''));
+      if (pending && pending.peerID === info.peer.id && pending.phase === 'waiting-ready') {
+        clearTimeout(pending.readyTimer);
+        pending.phase = 'sending';
+        pending.readyResolve(message);
+      }
+    } else if (message.type === 'file-ack') {
+      const pending = outgoingTransfers.get(String(message.transferId || ''));
+      if (pending && pending.peerID === info.peer.id && pending.ackResolve) {
+        clearTimeout(pending.ackTimer); outgoingTransfers.delete(String(message.transferId)); pending.ackResolve(message);
+      }
+    } else if (message.type === 'file-reject') {
+      const transferId = String(message.transferId || '');
+      const pending = outgoingTransfers.get(transferId);
+      if (pending && pending.peerID === info.peer.id) {
+        const error = new Error(String(message.reason || 'File ditolak penerima'));
+        if (pending.phase === 'waiting-ready') {
+          clearTimeout(pending.readyTimer); outgoingTransfers.delete(transferId); pending.readyReject(error);
+        } else if (pending.phase === 'sending') {
+          pending.failure = error;
+        } else if (pending.ackReject) {
+          clearTimeout(pending.ackTimer); outgoingTransfers.delete(transferId); pending.ackReject(error);
+        }
+      }
+      const download = pendingDownloads.get(transferId);
+      if (download && download.peerID === info.peer.id) {
+        clearTimeout(download.timer);
+        pendingDownloads.delete(transferId);
+        renderAvailableFiles();
+      }
+      log(`Permintaan/transfer file ditolak: ${String(message.reason || 'alasan tidak diketahui')}`, 'error');
+    } else if (message.type === 'file-cancel') {
+      const transfer = incomingFiles.get(String(message.transferId || ''));
+      if (transfer) { incomingFiles.delete(transfer.id); transfer.status='Pengirim membatalkan transfer'; renderIncomingProgress(transfer); }
+      log(`Transfer dari ${info.peer.name} dibatalkan.`);
+    }
+  }
+  function waitForBufferLow(channel, highWater = 1024 * 1024) {
+    if (channel.readyState !== 'open') return Promise.reject(new Error('Koneksi data terputus'));
+    if (channel.bufferedAmount <= highWater) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const cleanup = () => { channel.removeEventListener('bufferedamountlow', onLow); channel.removeEventListener('close', onClose); };
+      const onLow = () => { cleanup(); resolve(); };
+      const onClose = () => { cleanup(); reject(new Error('Koneksi data terputus')); };
+      channel.addEventListener('bufferedamountlow', onLow, {once:true});
+      channel.addEventListener('close', onClose, {once:true});
+      if (channel.bufferedAmount <= highWater && channel.readyState === 'open') { cleanup(); resolve(); }
+    });
+  }
+  function createOutgoingTransfer(transferId, peerIDToSend, timeoutMs=15000) {
+    let readyResolve, readyReject;
+    const ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
+    const state = {peerID:peerIDToSend, phase:'waiting-ready', readyResolve, readyReject, readyTimer:null, ackTimer:null, ackResolve:null, ackReject:null};
+    state.readyTimer = setTimeout(() => {
+      if (outgoingTransfers.get(transferId) !== state) return;
+      outgoingTransfers.delete(transferId);
+      state.readyReject(new Error('Penerima tidak merespons permintaan transfer'));
+    }, timeoutMs);
+    outgoingTransfers.set(transferId, state);
+    return {state, ready};
+  }
+  function waitForTransferAck(transferId, state, timeoutMs=20000) {
+    return new Promise((resolve, reject) => {
+      state.ackResolve = resolve; state.ackReject = reject; state.phase = 'waiting-ack';
+      state.ackTimer = setTimeout(() => {
+        if (outgoingTransfers.get(transferId) !== state) return;
+        outgoingTransfers.delete(transferId);
+        reject(new Error('Waktu tunggu konfirmasi penerima habis'));
+      }, timeoutMs);
+    });
+  }
+  function clearOutgoingTransfer(transferId) {
+    const pending = outgoingTransfers.get(transferId);
+    if (!pending) return;
+    clearTimeout(pending.readyTimer); clearTimeout(pending.ackTimer);
+    outgoingTransfers.delete(transferId);
+  }
+  async function sendFileToPeer(info, file, transferId=makePeerID(), publishedFileID='') {
+    const peerIDToSend = info?.peer?.id;
+    if (!file || !info || !info.channel || info.channel.readyState !== 'open') {
+      if (info?.channel?.readyState === 'open') {
+        try { info.channel.send(JSON.stringify({type:'file-reject', transferId, reason:'File tidak tersedia'})); } catch {}
+      }
+      transferStatus('Pilih file dan tunggu koneksi langsung.', 'error'); return;
+    }
+    if (file.size > MAX_FILE_BYTES) {
+      if (publishedFileID) { try { info.channel.send(JSON.stringify({type:'file-reject', transferId, reason:'File melewati batas ukuran PoC'})); } catch {} }
+      transferStatus(`File terlalu besar. Maksimal ${formatBytes(MAX_FILE_BYTES)}.`, 'error'); return;
+    }
+    if (outgoingByPeer.has(peerIDToSend)) {
+      if (publishedFileID) { try { info.channel.send(JSON.stringify({type:'file-reject', transferId, reason:'Perangkat ini sedang menerima transfer lain'})); } catch {} }
+      return;
+    }
+    const channel = info.channel;
+    const pendingTransfer = createOutgoingTransfer(transferId, peerIDToSend);
+    const pendingState = pendingTransfer.state;
+    outgoingByPeer.add(peerIDToSend);
+    renderTransferControls();
+    $('outgoingProgress').hidden = false;
+    $('outgoingProgress').value = 0;
+    transferStatus(`Menyiapkan ${file.name} (${formatBytes(file.size)})…`);
+    try {
+      const startMessage = {type:'file-start', transferId, name:file.name, size:file.size, mimeType:file.type || 'application/octet-stream', chunkSize:CHUNK_BYTES};
+      if (publishedFileID) startMessage.publishedFileId = publishedFileID;
+      channel.send(JSON.stringify(startMessage));
+      transferStatus(`Meminta kesiapan ${info.peer.name}…`);
+      await pendingTransfer.ready;
+      transferStatus(`Penerima siap. Mengirim ${file.name}…`);
+      for (let offset = 0; offset < file.size; offset += CHUNK_BYTES) {
+        if (pendingState.failure) throw pendingState.failure;
+        if (publishedFileID) {
+          const published = publishedFiles.get(publishedFileID);
+          if (!published || Date.now() >= published.expiresAt) throw new Error('File sementara kedaluwarsa saat transfer');
+        }
+        if (channel.readyState !== 'open') throw new Error('Koneksi terputus saat transfer');
+        await waitForBufferLow(channel);
+        if (pendingState.failure) throw pendingState.failure;
+        const chunk = await file.slice(offset, Math.min(offset + CHUNK_BYTES, file.size)).arrayBuffer();
+        if (pendingState.failure) throw pendingState.failure;
+        channel.send(chunk);
+        $('outgoingProgress').value = Math.min(100, (offset + chunk.byteLength) / Math.max(1, file.size) * 100);
+        transferStatus(`Mengirim ${formatBytes(Math.min(offset + chunk.byteLength, file.size))} dari ${formatBytes(file.size)} ke ${info.peer.name}…`);
+      }
+      if (pendingState.failure) throw pendingState.failure;
+      if (channel.readyState !== 'open') throw new Error('Koneksi terputus sebelum transfer selesai');
+      await waitForBufferLow(channel);
+      if (pendingState.failure) throw pendingState.failure;
+      if (publishedFileID) {
+        const published = publishedFiles.get(publishedFileID);
+        if (!published || Date.now() >= published.expiresAt) throw new Error('File sementara kedaluwarsa sebelum transfer selesai');
+      }
+      const acknowledgement = waitForTransferAck(transferId, pendingState);
+      channel.send(JSON.stringify({type:'file-end', transferId, size:file.size}));
+      transferStatus(`Data terkirim; menunggu konfirmasi penerima…`);
+      const ack = await acknowledgement;
+      if (Number(ack.size) !== file.size) throw new Error('Ukuran konfirmasi penerima tidak cocok');
+      $('outgoingProgress').value = 100;
+      transferStatus(`Berhasil! ${info.peer.name} menerima ${formatBytes(Number(ack.size))}.`, 'success');
+      log(`Penerima mengonfirmasi ${file.name} (${formatBytes(Number(ack.size))}) dari ${info.peer.name}.`);
+    } catch (error) {
+      clearOutgoingTransfer(transferId);
+      transferStatus(`Transfer gagal: ${error.message}`, 'error');
+      try { if (channel.readyState === 'open') channel.send(JSON.stringify({type:'file-cancel', transferId})); } catch {}
+      log(`Transfer ${file.name} gagal: ${error.message}`, 'error');
+    } finally {
+      outgoingByPeer.delete(peerIDToSend);
+      renderTransferControls();
+    }
+  }
+  async function sendSelectedFile() {
+    const peerIDToSend = $('peerSelect').value;
+    const info = connections.get(peerIDToSend);
+    if (!selectedFile || !info || !info.channel || info.channel.readyState !== 'open') {
+      transferStatus('Pilih file dan tunggu koneksi langsung.', 'error'); return;
+    }
+    await sendFileToPeer(info, selectedFile);
+  }
+  $('fileInput').addEventListener('change', event => {
+    selectedFile = event.target.files?.[0] || null;
+    if (!selectedFile) transferStatus('Tidak ada file yang dipilih.');
+    else if (selectedFile.size > MAX_FILE_BYTES) transferStatus(`File ${selectedFile.name} terlalu besar; batas ${formatBytes(MAX_FILE_BYTES)}.`, 'error');
+    else transferStatus(`Siap menyediakan ${selectedFile.name} (${formatBytes(selectedFile.size)}).`);
+    renderTransferControls();
+  });
+  $('sendFileBtn').addEventListener('click', () => { void sendSelectedFile(); });
+  $('publishFileBtn').addEventListener('click', publishSelectedFile);
+
+  async function createOffer(peer) {
+    if (connections.has(peer.id)) return;
+    const info = newConnection(peer);
+    try {
+      attachChannel(info, info.pc.createDataChannel('pulsync-discovery-poc', {ordered:true}));
+      const offer = await info.pc.createOffer();
+      await info.pc.setLocalDescription(offer);
+      await waitForICE(info.pc);
+      const filtered = filterLocalSDP(info.pc.localDescription.sdp);
+      log(`Offer ke ${peer.name}: ${filtered.keptCandidates} kandidat lokal dipertahankan, ${filtered.removed} kandidat lain dibuang.`);
+      if (!filtered.keptCandidates) log(`Tidak ada kandidat LAN yang bisa dipakai untuk ${peer.name}.`, 'error');
+      await request('/api/signal', {method:'POST', body:JSON.stringify({from:peerID,to:peer.id,type:'offer',sdp:filtered.sdp})});
+    } catch (error) {
+      log(`Gagal membuat offer ke ${peer.name}: ${error.message}`, 'error');
+      try { info.pc.close(); } catch {}
+      connections.delete(peer.id);
+      renderPeers();
+    }
+  }
+  async function answerOffer(signal) {
+    const peer = peers.get(signal.from) || {id:signal.from,name:'Perangkat '+signal.from.slice(0,6)};
+    let info = connections.get(signal.from);
+    if (info && info.state !== 'failed' && info.state !== 'closed') return;
+    if (info) { try { info.pc.close(); } catch {} connections.delete(signal.from); }
+    info = newConnection(peer);
+    try {
+      const filteredRemote = filterLocalSDP(signal.sdp);
+      if (!filteredRemote.keptCandidates) log(`Offer dari ${peer.name} tidak punya kandidat LAN yang valid.`, 'error');
+      await info.pc.setRemoteDescription({type:'offer',sdp:filteredRemote.sdp});
+      const answer = await info.pc.createAnswer();
+      await info.pc.setLocalDescription(answer);
+      await waitForICE(info.pc);
+      const filteredLocal = filterLocalSDP(info.pc.localDescription.sdp);
+      log(`Answer ke ${peer.name}: ${filteredLocal.keptCandidates} kandidat lokal dipertahankan, ${filteredLocal.removed} kandidat lain dibuang.`);
+      await request('/api/signal', {method:'POST', body:JSON.stringify({from:peerID,to:signal.from,type:'answer',sdp:filteredLocal.sdp})});
+    } catch (error) {
+      log(`Gagal menjawab ${peer.name}: ${error.message}`, 'error');
+      try { info.pc.close(); } catch {}
+      connections.delete(signal.from);
+      renderPeers();
+    }
+  }
+  async function handleSignals() {
+    try {
+      const pendingSignals = await request('/api/signals?id='+encodeURIComponent(peerID));
+      // Be defensive if an older server version returns null for an empty inbox.
+      const signals = Array.isArray(pendingSignals) ? pendingSignals : [];
+      for (const signal of signals) {
+        const fingerprint = `${signal.from}:${signal.type}:${signal.created_at}`;
+        if (seenSignals.has(fingerprint)) continue;
+        seenSignals.add(fingerprint);
+        if (signal.type === 'offer') await answerOffer(signal);
+        else if (signal.type === 'answer') {
+          const info = connections.get(signal.from);
+          if (info && info.pc.signalingState === 'have-local-offer') {
+            const filtered = filterLocalSDP(signal.sdp);
+            try { await info.pc.setRemoteDescription({type:'answer',sdp:filtered.sdp}); }
+            catch (error) { log(`Answer dari ${info.peer.name} ditolak: ${error.message}`, 'error'); }
+          }
+        }
+      }
+    } catch (error) {
+      if (running && !String(error.message).includes('Peer is not registered')) log(`Polling signaling: ${error.message}`, 'error');
+    }
+  }
+  async function heartbeat() {
+    await request('/api/hello', {method:'POST',body:JSON.stringify({id:peerID,name:displayName})});
+  }
+  async function discover() {
+    const others = await request('/api/peers?id='+encodeURIComponent(peerID));
+    const seen = new Set(others.map(p => p.id));
+    peers.clear();
+    for (const peer of others) peers.set(peer.id, peer);
+    for (const [id, info] of connections) {
+      if (!seen.has(id) && Date.now()-info.createdAt > 12000) {
+        try { info.pc.close(); } catch {}
+        connections.delete(id);
+      }
+    }
+    for (const peer of others) {
+      const existing = connections.get(peer.id);
+      if (existing) continue;
+      // Stable tie-break: only the lexicographically smaller peer initiates.
+      if (peerID.localeCompare(peer.id) < 0) createOffer(peer);
+    }
+    setStatus('Aktif · mencari LAN', true);
+    $('peerCount').textContent = `${others.length} ditemukan`;
+    renderPeers();
+  }
+  function renderPeers() {
+    const el = $('peerList');
+    const list = [...peers.values()];
+    if (!list.length) {
+      el.innerHTML = '<div class="empty">Belum ada kandidat perangkat. Buka PoC ini dari perangkat lain pada jaringan yang sama.</div>';
+      $('peerCount').textContent = '0 ditemukan';
+      renderTransferControls();
+      return;
+    }
+    el.replaceChildren();
+    for (const peer of list) {
+      const info = connections.get(peer.id);
+      const state = info?.state === 'connected' ? 'Koneksi langsung terbuka' : info?.pc?.connectionState === 'failed' ? 'Koneksi lokal gagal' : 'Mencoba koneksi lokal…';
+      const item = document.createElement('div'); item.className='device';
+      const icon = document.createElement('div'); icon.className='device-icon'; icon.textContent='⌁';
+      const main = document.createElement('div'); main.className='device-main';
+      const name = document.createElement('div'); name.className='device-name'; name.textContent=peer.name;
+      const sub = document.createElement('div'); sub.className='device-status'; sub.textContent=state;
+      main.append(name,sub); item.append(icon,main); el.append(item);
+    }
+    renderTransferControls();
+  }
+  async function start() {
+    try {
+      await heartbeat();
+      log(`Terdaftar sebagai ${displayName}; signaling aktif.`);
+      await discover();
+      await handleSignals();
+      intervals = [setInterval(() => heartbeat().catch(e => log(`Heartbeat: ${e.message}`, 'error')), 2500), setInterval(() => discover().catch(e => {setStatus('Signaling gagal');log(`Discovery: ${e.message}`, 'error')}), 1800), setInterval(handleSignals, 400), setInterval(maintainTemporaryFiles, 1000)];
+      log('Discovery, DataChannel, dan daftar file sementara aktif. Isi file tetap di perangkat pengirim, tidak diunggah ke server.');
+    } catch (error) {
+      setStatus('Signaling gagal');
+      log(`Tidak bisa memulai: ${error.message}`, 'error');
+    }
+  }
+  async function stop() {
+    running = false;
+    intervals.forEach(clearInterval);
+    for (const info of connections.values()) { try { info.pc.close(); } catch {} }
+    connections.clear();
+    try { await request('/api/leave', {method:'POST',body:JSON.stringify({id:peerID})}); } catch {}
+  }
+  $('retryBtn').addEventListener('click', async () => { log('Mencoba discovery ulang…'); try { await heartbeat(); await discover(); await handleSignals(); } catch(e) { log(e.message,'error'); } });
+  $('clearLogBtn').addEventListener('click', () => { $('log').textContent='Log dibersihkan.'; });
+  window.addEventListener('pagehide', () => {
+    running = false; intervals.forEach(clearInterval);
+    const body = JSON.stringify({id:peerID});
+    try { navigator.sendBeacon('/api/leave', new Blob([body], {type:'application/json'})); } catch {}
+    for (const info of connections.values()) { try { info.pc.close(); } catch {} }
+    for (const file of completedFiles) { try { URL.revokeObjectURL(file.url); } catch {} }
+  });
+  start();
+})();
+</script>
+</body>
+</html>
