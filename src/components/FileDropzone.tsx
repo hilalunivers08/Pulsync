@@ -2,7 +2,6 @@ import { useState, useRef, useCallback, type DragEvent, type ChangeEvent } from 
 import { API_BASE_URL } from '../config'
 
 const MAX_FILE_SIZE = 3 * 1024 * 1024 * 1024
-const MAX_LOCAL_FILE_SIZE = 25 * 1024 * 1024
 const BACKEND_URL = API_BASE_URL
 
 interface StagedFile {
@@ -79,11 +78,11 @@ export function FileDropzone({
   const addFiles = (files: File[]) => {
     const errors: string[] = []
     const valid: StagedFile[] = []
-    const maxSize = transportMode === 'local' ? MAX_LOCAL_FILE_SIZE : MAX_FILE_SIZE
+    const maxSize = MAX_FILE_SIZE
 
     for (const file of files) {
       if (file.size > maxSize) {
-        const limitLabel = transportMode === 'local' ? '25 MiB' : '3 GB'
+        const limitLabel = '3 GB'
         errors.push(`"${file.name}" melebihi batas ${limitLabel} (${formatBytes(file.size)})`)
       } else {
         valid.push({
@@ -259,7 +258,7 @@ export function FileDropzone({
           <h3>Tarik dan lepas file ke sini untuk mentransfer</h3>
           <p>atau klik untuk menjelajah file dari perangkat lokal Anda.</p>
           <div className="dropzone-limit-hint">
-            Tujuan: <strong style={{ color: '#c4b5fd' }}>{selectedDeviceName}</strong> • Maks. <strong>{transportMode === 'local' ? '25 MiB' : '3 GB'}</strong> per file
+            Tujuan: <strong style={{ color: '#c4b5fd' }}>{selectedDeviceName}</strong> • Maks. <strong>3 GB</strong> per file
           </div>
         </div>
 

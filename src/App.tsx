@@ -80,8 +80,24 @@ function App() {
     return api.publishFile(file, selectedDevice?.id)
   }
 
-  const handleDownloadLocal = (key: string) => {
-    const result = p2pApiRef.current?.downloadFile(key)
+  const handleDownloadLocal = async (key: string) => {
+    const api = p2pApiRef.current
+    if (!api) return
+    const target = p2pState.availableFiles.find((file) => file.key === key)
+    let fileHandle: FileSystemFileHandle | null = null
+    const picker = (window as Window & {
+      showSaveFilePicker?: (options?: { suggestedName?: string }) => Promise<FileSystemFileHandle>
+    }).showSaveFilePicker
+    if (target && typeof picker === 'function') {
+      try {
+        fileHandle = await picker.call(window, { suggestedName: target.name })
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') return
+        console.warn('[Pulsync] Dialog penyimpanan tidak tersedia; memakai mode memori.', error)
+        fileHandle = null
+      }
+    }
+    const result = api.downloadFile(key, fileHandle)
     if (result && !result.ok) console.warn('[Pulsync] Gagal meminta file:', result.message)
   }
 

@@ -24,7 +24,7 @@ interface RecentTransfersProps {
   transfers?: TransferItem[]
   onClearHistory?: () => void
   localFiles?: LocalTransferFileView[]
-  onDownloadLocalFile?: (key: string) => void
+  onDownloadLocalFile?: (key: string) => void | Promise<void>
   onRemoveLocalFile?: (id: string) => void
   onClearLocalFiles?: () => void
 }
@@ -243,7 +243,7 @@ export function RecentTransfers({
                 )}
                 {file.kind === 'available' && (
                   <>
-                    <button type="button" className="action-btn local-download-btn" disabled={!file.can_download || file.pending || file.receiving || file.deleting} onClick={() => onDownloadLocalFile?.(file.key)}>
+                    <button type="button" className="action-btn local-download-btn" disabled={!file.can_download || file.pending || file.receiving || file.deleting} onClick={() => { void onDownloadLocalFile?.(file.key) }}>
                       {file.deleting ? 'Menghapus…' : file.receiving ? 'Mengunduh…' : file.pending ? 'Menyiapkan…' : file.can_download ? 'Unduh' : 'Sumber offline'}
                     </button>
                     <button type="button" className="action-btn" disabled={file.deleting} onClick={() => onRemoveLocalFile?.(file.id)} title="Hapus berkas dari jaringan lokal">

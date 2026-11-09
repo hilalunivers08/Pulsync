@@ -74,7 +74,7 @@
   </div>
 
   <section class="card" style="margin-top:14px">
-    <div class="row"><h2>File sementara di LAN</h2><span class="pill">maks. 25 MiB · 10 menit</span></div>
+    <div class="row"><h2>File sementara di LAN</h2><span class="pill">maks. 3 GB · 10 menit</span></div>
     <div class="transfer-grid" style="margin-top:12px">
       <div>
         <label class="field" for="fileInput"><strong>Pilih file untuk disediakan</strong><input id="fileInput" type="file" /></label>
@@ -172,12 +172,15 @@
   const connections = new Map();
   const seenSignals = new Set();
   let intervals = [];
-  const MAX_FILE_BYTES = 25 * 1024 * 1024;
-  const MAX_RETAINED_BYTES = 50 * 1024 * 1024;
-  const MAX_PUBLISHED_BYTES = 50 * 1024 * 1024;
-  const CHUNK_BYTES = 16 * 1024;
+  const MAX_FILE_BYTES = 3 * 1024 * 1024 * 1024;
+  const MAX_RETAINED_BYTES = 3 * 1024 * 1024 * 1024;
+  const MAX_PUBLISHED_BYTES = 3 * 1024 * 1024 * 1024;
+  const CHUNK_BYTES = 64 * 1024;
   const TEMP_FILE_TTL_MS = 10 * 60 * 1000;
   const INACTIVE_DELETE_MS = 10 * 1000;
+  const BUFFER_LOW_THRESHOLD = 1024 * 1024;
+  const BUFFER_HIGH_WATER = 8 * 1024 * 1024;
+  const PROGRESS_INTERVAL_MS = 250;
   const outgoingByPeer = new Set();
   const outgoingTransfers = new Map();
   const incomingFiles = new Map();
@@ -276,7 +279,7 @@
   function attachChannel(info, channel) {
     info.channel = channel;
     channel.binaryType = 'arraybuffer';
-    channel.bufferedAmountLowThreshold = 256 * 1024;
+    channel.bufferedAmountLowThreshold = BUFFER_LOW_THRESHOLD;
     channel.onopen = () => {
       info.state = 'connected';
       channel.send(JSON.stringify({type:'poc-hello', name:displayName, id:peerID}));
@@ -442,6 +445,8 @@
   function maintainTemporaryFiles() {
     const now = Date.now();
     for (const [fileID, item] of publishedFiles) {
+      // Let an in-flight transfer finish even if the listing TTL has elapsed.
+      if (item.activeTransfers > 0) continue;
       if (now >= item.expiresAt) {
         expirePublishedFile(fileID, 'Masa berlaku 10 menit habis');
         continue;
@@ -465,7 +470,7 @@
     if ([...publishedFiles.values()].some(item => item.file === file)) { transferStatus('File ini sudah tersedia.', 'error'); return; }
     if (publishedBytes() + file.size > MAX_PUBLISHED_BYTES) { transferStatus(`Batas total file sementara ${formatBytes(MAX_PUBLISHED_BYTES)} tercapai.`, 'error'); return; }
     const now = Date.now();
-    const item = {id:makePeerID(), file, name:cleanIncomingName(file.name), size:file.size, mimeType:file.type || 'application/octet-stream', publishedAt:now, expiresAt:now + TEMP_FILE_TTL_MS, announcedTo:new Set(), inactiveSince:null};
+    const item = {id:makePeerID(), file, name:cleanIncomingName(file.name), size:file.size, mimeType:file.type || 'application/octet-stream', publishedAt:now, expiresAt:now + TEMP_FILE_TTL_MS, announcedTo:new Set(), inactiveSince:null, activeTransfers:0};
     publishedFiles.set(item.id, item);
     for (const info of connections.values()) sendCatalogEntry(info, item);
     transferStatus(`${item.name} tersedia hingga 10 menit selama sumber aktif.`, 'success');
@@ -542,7 +547,11 @@
       }
       transfer.chunks.push(bytes);
       transfer.received += bytes.byteLength;
-      renderIncomingProgress(transfer);
+      const now = Date.now();
+      if (now - (transfer.lastProgressAt || 0) >= PROGRESS_INTERVAL_MS || transfer.received === transfer.size) {
+        transfer.lastProgressAt = now;
+        renderIncomingProgress(transfer);
+      }
       return;
     }
     let message;
@@ -670,7 +679,7 @@
       log(`Transfer dari ${info.peer.name} dibatalkan.`);
     }
   }
-  function waitForBufferLow(channel, highWater = 1024 * 1024) {
+  function waitForBufferLow(channel, highWater = BUFFER_HIGH_WATER) {
     if (channel.readyState !== 'open') return Promise.reject(new Error('Koneksi data terputus'));
     if (channel.bufferedAmount <= highWater) return Promise.resolve();
     return new Promise((resolve, reject) => {
@@ -726,14 +735,22 @@
       if (publishedFileID) { try { info.channel.send(JSON.stringify({type:'file-reject', transferId, reason:'Perangkat ini sedang menerima transfer lain'})); } catch {} }
       return;
     }
+    const published = publishedFileID ? publishedFiles.get(publishedFileID) : null;
+    if (publishedFileID && (!published || Date.now() >= published.expiresAt)) {
+      try { info.channel.send(JSON.stringify({type:'file-reject', transferId, reason:'File sudah kedaluwarsa atau tidak tersedia'})); } catch {}
+      transferStatus('File sementara sudah kedaluwarsa.', 'error');
+      return;
+    }
     const channel = info.channel;
     const pendingTransfer = createOutgoingTransfer(transferId, peerIDToSend);
     const pendingState = pendingTransfer.state;
     outgoingByPeer.add(peerIDToSend);
+    if (published) published.activeTransfers = (published.activeTransfers || 0) + 1;
     renderTransferControls();
     $('outgoingProgress').hidden = false;
     $('outgoingProgress').value = 0;
     transferStatus(`Menyiapkan ${file.name} (${formatBytes(file.size)})…`);
+    let lastProgressAt = 0;
     try {
       const startMessage = {type:'file-start', transferId, name:file.name, size:file.size, mimeType:file.type || 'application/octet-stream', chunkSize:CHUNK_BYTES};
       if (publishedFileID) startMessage.publishedFileId = publishedFileID;
@@ -743,28 +760,26 @@
       transferStatus(`Penerima siap. Mengirim ${file.name}…`);
       for (let offset = 0; offset < file.size; offset += CHUNK_BYTES) {
         if (pendingState.failure) throw pendingState.failure;
-        if (publishedFileID) {
-          const published = publishedFiles.get(publishedFileID);
-          if (!published || Date.now() >= published.expiresAt) throw new Error('File sementara kedaluwarsa saat transfer');
-        }
         if (channel.readyState !== 'open') throw new Error('Koneksi terputus saat transfer');
         await waitForBufferLow(channel);
         if (pendingState.failure) throw pendingState.failure;
         const chunk = await file.slice(offset, Math.min(offset + CHUNK_BYTES, file.size)).arrayBuffer();
         if (pendingState.failure) throw pendingState.failure;
         channel.send(chunk);
-        $('outgoingProgress').value = Math.min(100, (offset + chunk.byteLength) / Math.max(1, file.size) * 100);
-        transferStatus(`Mengirim ${formatBytes(Math.min(offset + chunk.byteLength, file.size))} dari ${formatBytes(file.size)} ke ${info.peer.name}…`);
+        const sent = Math.min(offset + chunk.byteLength, file.size);
+        const now = Date.now();
+        if (now - lastProgressAt >= PROGRESS_INTERVAL_MS || sent === file.size) {
+          lastProgressAt = now;
+          $('outgoingProgress').value = Math.min(100, sent / Math.max(1, file.size) * 100);
+          transferStatus(`Mengirim ${formatBytes(sent)} dari ${formatBytes(file.size)} ke ${info.peer.name}…`);
+        }
       }
       if (pendingState.failure) throw pendingState.failure;
       if (channel.readyState !== 'open') throw new Error('Koneksi terputus sebelum transfer selesai');
       await waitForBufferLow(channel);
       if (pendingState.failure) throw pendingState.failure;
-      if (publishedFileID) {
-        const published = publishedFiles.get(publishedFileID);
-        if (!published || Date.now() >= published.expiresAt) throw new Error('File sementara kedaluwarsa sebelum transfer selesai');
-      }
-      const acknowledgement = waitForTransferAck(transferId, pendingState);
+      const ackTimeoutMs = Math.min(120000, Math.max(20000, Math.ceil(file.size / (10 * 1024 * 1024)) * 1000));
+      const acknowledgement = waitForTransferAck(transferId, pendingState, ackTimeoutMs);
       channel.send(JSON.stringify({type:'file-end', transferId, size:file.size}));
       transferStatus(`Data terkirim; menunggu konfirmasi penerima…`);
       const ack = await acknowledgement;
@@ -778,6 +793,7 @@
       try { if (channel.readyState === 'open') channel.send(JSON.stringify({type:'file-cancel', transferId})); } catch {}
       log(`Transfer ${file.name} gagal: ${error.message}`, 'error');
     } finally {
+      if (published) published.activeTransfers = Math.max(0, (published.activeTransfers || 0) - 1);
       outgoingByPeer.delete(peerIDToSend);
       renderTransferControls();
     }

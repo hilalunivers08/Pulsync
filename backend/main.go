@@ -18,7 +18,10 @@ import (
 )
 
 const (
-	maxUploadSize = 3 * 1024 * 1024 * 1024
+	maxFileSize = 3 * 1024 * 1024 * 1024
+	// Multipart bodies add boundary/header overhead on top of the file bytes,
+	// so the request limit needs a small margin over the per-file limit.
+	maxUploadSize = maxFileSize + 16*1024*1024
 )
 
 type FileItem struct {
@@ -272,6 +275,13 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 		isMultipart = true
 		if err := r.ParseMultipartForm(32 << 20); err == nil {
 			if f, fh, err := r.FormFile("file"); err == nil {
+				if fh.Size > maxFileSize {
+					f.Close()
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusRequestEntityTooLarge)
+					json.NewEncoder(w).Encode(map[string]string{"error": "Ukuran file melebihi batas 3 GB"})
+					return
+				}
 				filename = fh.Filename
 				src = f
 				defer f.Close()

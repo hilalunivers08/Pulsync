@@ -86,7 +86,7 @@
   </div>
 
   <section class="card" style="margin-top:14px">
-    <div class="row"><h2>File sementara di LAN</h2><span class="pill">maks. 25 MiB · 10 menit</span></div>
+    <div class="row"><h2>File sementara di LAN</h2><span class="pill">maks. 3 GB · 10 menit</span></div>
     <div class="transfer-grid" style="margin-top:12px">
       <div>
         <label class="field" for="fileInput"><strong>Pilih file untuk disediakan</strong><input id="fileInput" type="file" /></label>
@@ -208,12 +208,16 @@
   const connections = new Map();
   const seenSignals = new Set();
   let intervals = [];
-  const MAX_FILE_BYTES = 25 * 1024 * 1024;
-  const MAX_RETAINED_BYTES = 50 * 1024 * 1024;
-  const MAX_PUBLISHED_BYTES = 50 * 1024 * 1024;
-  const CHUNK_BYTES = 16 * 1024;
+  const MAX_FILE_BYTES = 3 * 1024 * 1024 * 1024;
+  const MAX_RETAINED_BYTES = 3 * 1024 * 1024 * 1024;
+  const MAX_PUBLISHED_BYTES = 3 * 1024 * 1024 * 1024;
+  const CHUNK_BYTES = 64 * 1024;
   const TEMP_FILE_TTL_MS = 10 * 60 * 1000;
   const INACTIVE_DELETE_MS = 10 * 1000;
+  const BUFFER_LOW_THRESHOLD = 1024 * 1024;
+  const BUFFER_HIGH_WATER = 8 * 1024 * 1024;
+  const PROGRESS_INTERVAL_MS = 250;
+  const LARGE_FILE_WARNING_BYTES = 512 * 1024 * 1024;
   const outgoingByPeer = new Set();
   const outgoingTransfers = new Map();
   const incomingFiles = new Map();
@@ -242,6 +246,15 @@
     link.remove();
     // Keep the Blob URL alive long enough for the browser to start the download.
     setTimeout(() => { URL.revokeObjectURL(url); activeDownloadURLs.delete(url); }, 60_000);
+  }
+  function abortIncomingTransfer(transfer) {
+    if (!transfer) return;
+    if (transfer.writable) {
+      const writable = transfer.writable;
+      transfer.writable = null;
+      try { void writable.abort(); } catch {}
+    }
+    if (Array.isArray(transfer.chunks)) transfer.chunks.length = 0;
   }
   function setAvailableFileStatus(key, message, level='info') {
     availableFileStatuses.set(key, {message:String(message), level, at:Date.now()});
@@ -338,8 +351,9 @@
   }
   function attachChannel(info, channel) {
     info.channel = channel;
+    info.messageChain = Promise.resolve();
     channel.binaryType = 'arraybuffer';
-    channel.bufferedAmountLowThreshold = 256 * 1024;
+    channel.bufferedAmountLowThreshold = BUFFER_LOW_THRESHOLD;
     channel.onopen = () => {
       info.state = 'connected';
       channel.send(JSON.stringify({type:'poc-hello', name:displayName, id:peerID}));
@@ -349,13 +363,21 @@
       renderAvailableFiles();
       renderPublishedFiles();
     };
-    channel.onmessage = event => { void handleChannelMessage(info, event.data); };
+    // Serialize message handling so streamed chunks are written in order.
+    channel.onmessage = event => {
+      info.messageChain = info.messageChain
+        .then(() => handleChannelMessage(info, event.data))
+        .catch(error => log(`Pesan dari ${info.peer.name} gagal diproses: ${error.message}`, 'error'));
+    };
     channel.onclose = () => {
       info.state = 'disconnected';
       info.disconnectedAt = Date.now();
       info.stateChangedAt = Date.now();
       for (const [transferID, transfer] of incomingFiles) {
-        if (transfer.peerID === info.peer.id) incomingFiles.delete(transferID);
+        if (transfer.peerID === info.peer.id) {
+          abortIncomingTransfer(transfer);
+          incomingFiles.delete(transferID);
+        }
       }
       for (const [key, item] of availableFiles) {
         if (item.peerID === info.peer.id) {
@@ -583,6 +605,9 @@
   function maintainTemporaryFiles() {
     const now = Date.now();
     for (const [fileID, item] of publishedFiles) {
+      // Keep the file available while a transfer is in progress, even if the
+      // listing TTL has elapsed. Large files can take longer than 10 minutes.
+      if (item.activeTransfers > 0) continue;
       if (now >= item.expiresAt) {
         expirePublishedFile(fileID, 'Masa berlaku 10 menit habis');
         continue;
@@ -606,7 +631,7 @@
     if ([...publishedFiles.values()].some(item => item.file === file)) { transferStatus('File ini sudah tersedia.', 'error'); return false; }
     if (publishedBytes() + file.size > MAX_PUBLISHED_BYTES) { transferStatus(`Batas total file sementara ${formatBytes(MAX_PUBLISHED_BYTES)} tercapai.`, 'error'); return false; }
     const now = Date.now();
-    const item = {id:makePeerID(), file, name:cleanIncomingName(file.name), size:file.size, mimeType:file.type || 'application/octet-stream', publishedAt:now, expiresAt:now + TEMP_FILE_TTL_MS, announcedTo:new Set(), inactiveSince:null, targetPeerIDs:targetPeerID ? [targetPeerID] : null};
+    const item = {id:makePeerID(), file, name:cleanIncomingName(file.name), size:file.size, mimeType:file.type || 'application/octet-stream', publishedAt:now, expiresAt:now + TEMP_FILE_TTL_MS, announcedTo:new Set(), inactiveSince:null, activeTransfers:0, targetPeerIDs:targetPeerID ? [targetPeerID] : null};
     publishedFiles.set(item.id, item);
     for (const info of connections.values()) sendCatalogEntry(info, item);
     transferStatus(`${item.name} tersedia hingga 10 menit selama sumber aktif.`, 'success');
@@ -615,7 +640,7 @@
     renderPublishedFiles(); renderAvailableFiles();
     return true;
   }
-  async function requestFileDownload(key, item) {
+  async function requestFileDownload(key, item, fileHandle = null) {
     const info = connectedInfo(item.peerID);
     if (!info) {
       setAvailableFileStatus(key, 'Sumber sedang offline. Coba lagi setelah perangkat terhubung.', 'error');
@@ -627,8 +652,25 @@
       notifyUser(`File ${item.name} sudah kedaluwarsa.`, 'error'); renderAvailableFiles(); return;
     }
     if ([...pendingDownloads.values()].some(request => request.key === key)) return;
+    // The dashboard can pass a handle obtained from showSaveFilePicker so the
+    // transfer streams straight to disk. Standalone mode can open the picker here.
+    let handle = fileHandle && typeof fileHandle.createWritable === 'function' ? fileHandle : null;
+    if (!handle && !embeddedMode && typeof window.showSaveFilePicker === 'function') {
+      try {
+        handle = await window.showSaveFilePicker({ suggestedName: cleanIncomingName(item.name) });
+      } catch (error) {
+        if (error && error.name === 'AbortError') {
+          setAvailableFileStatus(key, 'Penyimpanan dibatalkan.', 'info');
+          renderAvailableFiles();
+          return;
+        }
+        log(`Tidak bisa membuka dialog penyimpanan: ${error.message}`, 'error');
+        handle = null;
+      }
+    }
+    const streaming = !!handle;
     const transferId = makePeerID();
-    const pending = {transferId, key, fileID:item.fileID, peerID:item.peerID, name:item.name, stage:'requesting', timer:null};
+    const pending = {transferId, key, fileID:item.fileID, peerID:item.peerID, name:item.name, stage:'requesting', timer:null, fileHandle:handle};
     pending.timer = setTimeout(() => {
       if (pendingDownloads.get(transferId) !== pending) return;
       pendingDownloads.delete(transferId);
@@ -638,8 +680,17 @@
       log(`Permintaan unduhan ${item.name} tidak mendapat respons.`, 'error');
     }, 20000);
     pendingDownloads.set(transferId, pending);
-    setAvailableFileStatus(key, 'Permintaan dikirim. Menunggu pengirim menyiapkan file…', 'info');
+    if (streaming) {
+      setAvailableFileStatus(key, 'Permintaan dikirim. File akan disimpan langsung ke disk…', 'info');
+    } else if (item.size > LARGE_FILE_WARNING_BYTES) {
+      setAvailableFileStatus(key, `Permintaan dikirim. File ${formatBytes(item.size)} akan ditahan di memori penerima; gunakan HTTPS/localhost agar tersimpan langsung ke disk.`, 'info');
+    } else {
+      setAvailableFileStatus(key, 'Permintaan dikirim. Menunggu pengirim menyiapkan file…', 'info');
+    }
     notifyUser(`Meminta ${item.name} dari ${item.fromName}…`, 'info');
+    if (!streaming && item.size > LARGE_FILE_WARNING_BYTES) {
+      notifyUser(`File ${formatBytes(item.size)} akan ditahan di RAM. Untuk file besar, gunakan HTTPS/localhost.`, 'info');
+    }
     renderAvailableFiles();
     try {
       info.channel.send(JSON.stringify({type:'file-request', fileId:item.fileID, transferId}));
@@ -679,6 +730,7 @@
       const bytes = data instanceof ArrayBuffer ? data : data instanceof Blob ? await data.arrayBuffer() : null;
       if (!bytes) { log(`Jenis data biner tidak didukung dari ${info.peer.name}.`, 'error'); return; }
       if (transfer.received + bytes.byteLength > transfer.size) {
+        abortIncomingTransfer(transfer);
         incomingFiles.delete(transfer.id);
         transfer.status = 'Data melebihi ukuran yang diumumkan';
         if (transfer.catalogKey) setAvailableFileStatus(transfer.catalogKey, 'Transfer gagal: ukuran data tidak sesuai.', 'error');
@@ -688,9 +740,17 @@
         log(`Transfer ${transfer.name} ditolak karena ukuran data berlebih.`, 'error');
         return;
       }
-      transfer.chunks.push(bytes);
+      if (transfer.writable) {
+        await transfer.writable.write(bytes);
+      } else {
+        transfer.chunks.push(bytes);
+      }
       transfer.received += bytes.byteLength;
-      renderIncomingProgress(transfer);
+      const now = Date.now();
+      if (now - (transfer.lastProgressAt || 0) >= PROGRESS_INTERVAL_MS || transfer.received === transfer.size) {
+        transfer.lastProgressAt = now;
+        renderIncomingProgress(transfer);
+      }
       return;
     }
     let message;
@@ -768,14 +828,15 @@
     } else if (message.type === 'file-start') {
       const size = Number(message.size);
       const transferId = typeof message.transferId === 'string' ? message.transferId : '';
+      const pendingDownload = pendingDownloads.get(transferId);
+      const willStream = !!(pendingDownload && pendingDownload.fileHandle);
       const retainedBytes = [...activeDownloadURLs.values()].reduce((total, size) => total + size, 0) + [...incomingFiles.values()].reduce((total, item) => total + item.size, 0);
       const duplicatePeerTransfer = [...incomingFiles.values()].some(item => item.peerID === info.peer.id);
       let rejection = '';
       if (!transferId || transferId.length > 100 || !Number.isSafeInteger(size) || size < 0 || size > MAX_FILE_BYTES) rejection = `Ukuran file harus maksimal ${formatBytes(MAX_FILE_BYTES)} atau metadata tidak valid`;
       else if (duplicatePeerTransfer) rejection = 'Satu transfer per perangkat diizinkan pada PoC ini';
-      else if (retainedBytes + size > MAX_RETAINED_BYTES) rejection = `Batas total file sementara ${formatBytes(MAX_RETAINED_BYTES)} tercapai`;
+      else if (!willStream && retainedBytes + size > MAX_RETAINED_BYTES) rejection = `Batas total file sementara ${formatBytes(MAX_RETAINED_BYTES)} tercapai`;
       if (rejection) {
-        const pendingDownload = pendingDownloads.get(transferId);
         if (pendingDownload && pendingDownload.peerID === info.peer.id) {
           clearTimeout(pendingDownload.timer);
           pendingDownloads.delete(transferId);
@@ -787,25 +848,45 @@
         log(`File dari ${info.peer.name} ditolak: ${rejection}.`, 'error');
         return;
       }
-      const pendingDownload = pendingDownloads.get(transferId);
       if (pendingDownload && pendingDownload.peerID === info.peer.id) {
         clearTimeout(pendingDownload.timer);
         pendingDownloads.delete(transferId);
-        setAvailableFileStatus(pendingDownload.key, 'Unduhan sedang diproses…', 'info');
-        notifyUser('Unduhan dimulai; file akan tersimpan otomatis setelah transfer selesai.', 'info');
+        setAvailableFileStatus(pendingDownload.key, willStream ? 'Menyimpan langsung ke disk…' : 'Unduhan sedang diproses…', 'info');
+        notifyUser(willStream ? 'Unduhan dimulai; file akan disimpan langsung ke disk.' : 'Unduhan dimulai; file akan tersimpan otomatis setelah transfer selesai.', 'info');
       }
       const publishedFileID = String(message.publishedFileId || pendingDownload?.fileID || '');
-      const transfer = {id:transferId, peerID:info.peer.id, fromName:info.peer.name, name:cleanIncomingName(message.name), size, mimeType:String(message.mimeType || 'application/octet-stream').slice(0,120), received:0, chunks:[], status:'Menerima…', startedAt:Date.now(), catalogKey:publishedFileID ? catalogKey(info.peer.id, publishedFileID) : ''};
+      const transfer = {id:transferId, peerID:info.peer.id, fromName:info.peer.name, name:cleanIncomingName(message.name), size, mimeType:String(message.mimeType || 'application/octet-stream').slice(0,120), received:0, chunks:[], writable:null, lastProgressAt:0, status:'Menerima…', startedAt:Date.now(), catalogKey:publishedFileID ? catalogKey(info.peer.id, publishedFileID) : ''};
+      if (willStream) {
+        try {
+          transfer.writable = await pendingDownload.fileHandle.createWritable();
+        } catch (error) {
+          transfer.writable = null;
+          log(`Gagal membuka file tujuan; memakai memori: ${error.message}`, 'error');
+          notifyUser('Tidak bisa menyimpan langsung ke disk; file akan ditahan di memori.', 'error');
+        }
+      }
+      if (!transfer.writable && retainedBytes + size > MAX_RETAINED_BYTES) {
+        const reason = `Batas total file sementara ${formatBytes(MAX_RETAINED_BYTES)} tercapai`;
+        if (pendingDownload && pendingDownload.peerID === info.peer.id) {
+          setAvailableFileStatus(pendingDownload.key, reason, 'error');
+          notifyUser(`Tidak bisa menerima ${pendingDownload.name}: ${reason}.`, 'error');
+        }
+        try { info.channel.send(JSON.stringify({type:'file-reject', transferId, reason})); } catch {}
+        renderAvailableFiles();
+        log(`File dari ${info.peer.name} ditolak: ${reason}.`, 'error');
+        return;
+      }
       incomingFiles.set(transfer.id, transfer);
       renderAvailableFiles();
       renderIncomingProgress(transfer);
       try { info.channel.send(JSON.stringify({type:'file-ready', transferId:transfer.id, maxBytes:MAX_FILE_BYTES})); }
-      catch (error) { incomingFiles.delete(transfer.id); renderIncomingFiles(); log(`Tidak bisa menerima transfer dari ${info.peer.name}: ${error.message}`, 'error'); return; }
-      log(`Siap menerima ${transfer.name} (${formatBytes(size)}) dari ${info.peer.name}.`);
+      catch (error) { abortIncomingTransfer(transfer); incomingFiles.delete(transfer.id); renderIncomingFiles(); log(`Tidak bisa menerima transfer dari ${info.peer.name}: ${error.message}`, 'error'); return; }
+      log(`Siap menerima ${transfer.name} (${formatBytes(size)}) dari ${info.peer.name}${transfer.writable ? ' langsung ke disk' : ''}.`);
     } else if (message.type === 'file-end') {
       const transfer = incomingFiles.get(String(message.transferId || ''));
       if (!transfer || transfer.peerID !== info.peer.id) return;
       if (transfer.received !== transfer.size) {
+        abortIncomingTransfer(transfer);
         transfer.status = `Gagal: ukuran diterima ${formatBytes(transfer.received)} dari ${formatBytes(transfer.size)}`;
         if (transfer.catalogKey) setAvailableFileStatus(transfer.catalogKey, 'Transfer tidak lengkap; coba unduh kembali.', 'error');
         notifyUser(`Transfer ${transfer.name} tidak lengkap. Coba unduh kembali jika file masih tersedia.`, 'error');
@@ -815,7 +896,37 @@
         log(`Transfer ${transfer.name} tidak lengkap; file tidak ditawarkan untuk diunduh.`, 'error');
         return;
       }
-      const blob = new Blob(transfer.chunks, {type:transfer.mimeType});
+      if (transfer.writable) {
+        const writable = transfer.writable;
+        transfer.writable = null;
+        incomingFiles.delete(transfer.id);
+        try {
+          await writable.close();
+          if (transfer.catalogKey) setAvailableFileStatus(transfer.catalogKey, 'File disimpan langsung ke disk.', 'success');
+          notifyUser(`Unduhan ${transfer.name} selesai dan tersimpan ke disk.`, 'success');
+          log(`Transfer selesai: ${transfer.name} (${formatBytes(transfer.size)}). File disimpan langsung ke disk.`);
+          try { info.channel.send(JSON.stringify({type:'file-ack', transferId:transfer.id, size:transfer.size})); } catch {}
+        } catch (error) {
+          if (transfer.catalogKey) setAvailableFileStatus(transfer.catalogKey, `Gagal menyelesaikan penyimpanan: ${error.message}`, 'error');
+          notifyUser(`File ${transfer.name} diterima, tetapi gagal menyimpan ke disk: ${error.message}`, 'error');
+          try { info.channel.send(JSON.stringify({type:'file-reject', transferId:transfer.id, reason:`Gagal menyimpan ke disk: ${error.message}`})); } catch {}
+          log(`File ${transfer.name} gagal disimpan ke disk: ${error.message}`, 'error');
+        }
+        renderIncomingFiles(); renderAvailableFiles();
+        return;
+      }
+      let blob;
+      try {
+        blob = new Blob(transfer.chunks, {type:transfer.mimeType});
+      } catch (error) {
+        incomingFiles.delete(transfer.id);
+        if (transfer.catalogKey) setAvailableFileStatus(transfer.catalogKey, `Gagal menyusun file di memori: ${error.message}`, 'error');
+        notifyUser(`File ${transfer.name} gagal disusun di memori: ${error.message}`, 'error');
+        try { info.channel.send(JSON.stringify({type:'file-reject', transferId:transfer.id, reason:`Gagal menyusun file: ${error.message}`})); } catch {}
+        renderIncomingFiles(); renderAvailableFiles();
+        log(`File ${transfer.name} gagal disusun di memori: ${error.message}`, 'error');
+        return;
+      }
       incomingFiles.delete(transfer.id);
       try {
         triggerAutomaticDownload(blob, transfer.name);
@@ -869,7 +980,7 @@
     } else if (message.type === 'file-cancel') {
       const transferId = String(message.transferId || '');
       const transfer = incomingFiles.get(transferId);
-      if (transfer) { incomingFiles.delete(transfer.id); transfer.status='Pengirim membatalkan transfer'; renderIncomingProgress(transfer); }
+      if (transfer) { abortIncomingTransfer(transfer); incomingFiles.delete(transfer.id); transfer.status='Pengirim membatalkan transfer'; renderIncomingProgress(transfer); }
       const download = pendingDownloads.get(transferId);
       if (download && download.peerID === info.peer.id) {
         clearTimeout(download.timer); pendingDownloads.delete(transferId);
@@ -880,7 +991,7 @@
       log(`Transfer dari ${info.peer.name} dibatalkan.`);
     }
   }
-  function waitForBufferLow(channel, highWater = 1024 * 1024) {
+  function waitForBufferLow(channel, highWater = BUFFER_HIGH_WATER) {
     if (channel.readyState !== 'open') return Promise.reject(new Error('Koneksi data terputus'));
     if (channel.bufferedAmount <= highWater) return Promise.resolve();
     return new Promise((resolve, reject) => {
@@ -936,14 +1047,24 @@
       if (publishedFileID) { try { info.channel.send(JSON.stringify({type:'file-reject', transferId, reason:'Perangkat ini sedang menerima transfer lain'})); } catch {} }
       return;
     }
+    const published = publishedFileID ? publishedFiles.get(publishedFileID) : null;
+    if (publishedFileID && (!published || Date.now() >= published.expiresAt)) {
+      try { info.channel.send(JSON.stringify({type:'file-reject', transferId, reason:'File sudah kedaluwarsa atau tidak tersedia'})); } catch {}
+      transferStatus('File sementara sudah kedaluwarsa.', 'error');
+      return;
+    }
     const channel = info.channel;
     const pendingTransfer = createOutgoingTransfer(transferId, peerIDToSend);
     const pendingState = pendingTransfer.state;
     outgoingByPeer.add(peerIDToSend);
+    // Keep the published listing alive while this transfer is running, even if
+    // its 10-minute TTL elapses mid-transfer.
+    if (published) published.activeTransfers = (published.activeTransfers || 0) + 1;
     renderTransferControls();
     $('outgoingProgress').hidden = false;
     $('outgoingProgress').value = 0;
     transferStatus(`Menyiapkan ${file.name} (${formatBytes(file.size)})…`);
+    let lastProgressAt = 0;
     try {
       const startMessage = {type:'file-start', transferId, name:file.name, size:file.size, mimeType:file.type || 'application/octet-stream', chunkSize:CHUNK_BYTES};
       if (publishedFileID) startMessage.publishedFileId = publishedFileID;
@@ -953,28 +1074,27 @@
       transferStatus(`Penerima siap. Mengirim ${file.name}…`);
       for (let offset = 0; offset < file.size; offset += CHUNK_BYTES) {
         if (pendingState.failure) throw pendingState.failure;
-        if (publishedFileID) {
-          const published = publishedFiles.get(publishedFileID);
-          if (!published || Date.now() >= published.expiresAt) throw new Error('File sementara kedaluwarsa saat transfer');
-        }
         if (channel.readyState !== 'open') throw new Error('Koneksi terputus saat transfer');
         await waitForBufferLow(channel);
         if (pendingState.failure) throw pendingState.failure;
         const chunk = await file.slice(offset, Math.min(offset + CHUNK_BYTES, file.size)).arrayBuffer();
         if (pendingState.failure) throw pendingState.failure;
         channel.send(chunk);
-        $('outgoingProgress').value = Math.min(100, (offset + chunk.byteLength) / Math.max(1, file.size) * 100);
-        transferStatus(`Mengirim ${formatBytes(Math.min(offset + chunk.byteLength, file.size))} dari ${formatBytes(file.size)} ke ${info.peer.name}…`);
+        const sent = Math.min(offset + chunk.byteLength, file.size);
+        const now = Date.now();
+        if (now - lastProgressAt >= PROGRESS_INTERVAL_MS || sent === file.size) {
+          lastProgressAt = now;
+          $('outgoingProgress').value = Math.min(100, sent / Math.max(1, file.size) * 100);
+          transferStatus(`Mengirim ${formatBytes(sent)} dari ${formatBytes(file.size)} ke ${info.peer.name}…`);
+        }
       }
       if (pendingState.failure) throw pendingState.failure;
       if (channel.readyState !== 'open') throw new Error('Koneksi terputus sebelum transfer selesai');
       await waitForBufferLow(channel);
       if (pendingState.failure) throw pendingState.failure;
-      if (publishedFileID) {
-        const published = publishedFiles.get(publishedFileID);
-        if (!published || Date.now() >= published.expiresAt) throw new Error('File sementara kedaluwarsa sebelum transfer selesai');
-      }
-      const acknowledgement = waitForTransferAck(transferId, pendingState);
+      // The receiver may need extra time to flush a large file to disk.
+      const ackTimeoutMs = Math.min(120000, Math.max(20000, Math.ceil(file.size / (10 * 1024 * 1024)) * 1000));
+      const acknowledgement = waitForTransferAck(transferId, pendingState, ackTimeoutMs);
       channel.send(JSON.stringify({type:'file-end', transferId, size:file.size}));
       transferStatus(`Data terkirim; menunggu konfirmasi penerima…`);
       const ack = await acknowledgement;
@@ -990,6 +1110,7 @@
       try { if (channel.readyState === 'open') channel.send(JSON.stringify({type:'file-cancel', transferId, reason:error.message})); } catch {}
       log(`Transfer ${file.name} gagal: ${error.message}`, 'error');
     } finally {
+      if (published) published.activeTransfers = Math.max(0, (published.activeTransfers || 0) - 1);
       outgoingByPeer.delete(peerIDToSend);
       renderTransferControls();
     }
@@ -1226,13 +1347,14 @@
       const published = [...publishedFiles.values()].find(item => item.file === file);
       return ok && published ? {ok:true, id:published.id} : {ok:false, message:$('outgoingStatus')?.textContent || 'File gagal disediakan.'};
     },
-    downloadFile(key) {
+    downloadFile(key, fileHandle = null) {
       const item = availableFiles.get(String(key));
       if (!item) {
         notifyUser('File tidak lagi tersedia. Minta pengirim menyediakan ulang jika belum kedaluwarsa.', 'error');
         return {ok:false, message:'File tidak lagi tersedia.'};
       }
-      void requestFileDownload(String(key), item);
+      const handle = fileHandle && typeof fileHandle.createWritable === 'function' ? fileHandle : null;
+      void requestFileDownload(String(key), item, handle);
       return {ok:true};
     },
     clearNotice() { userNotice = null; },

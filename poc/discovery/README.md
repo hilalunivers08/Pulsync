@@ -22,7 +22,7 @@ Gunakan alamat yang sama di komputer server dan penerima, bukan `localhost` pada
 ## Uji file sementara
 
 1. Tunggu kedua perangkat muncul dalam daftar dan status koneksi langsung terbuka.
-2. Pada pengirim, pilih file berukuran maksimal 25 MiB lalu tekan **Sediakan 10 menit**.
+2. Pada pengirim, pilih file berukuran maksimal 3 GB lalu tekan **Sediakan 10 menit**.
 3. Pada penerima, file muncul pada daftar **File dari perangkat lain**. Tekan **Ambil file** untuk meminta transfer.
 4. Setelah transfer selesai, klik **Simpan ke perangkat** pada bagian Transfer diterima.
 5. Uji meminta file yang sama lagi, lalu uji TTL 10 menit dan penghapusan setelah semua penerima yang sudah melihat katalog tidak aktif selama 10 detik.
@@ -38,7 +38,7 @@ Transfer menggunakan pesan kontrol JSON dan potongan biner 16 KiB melalui WebRTC
 - Browser membuat koneksi WebRTC tanpa STUN/TURN.
 - SDP hanya mempertahankan kandidat host yang tampak lokal/private; kandidat server-reflexive, relay, dan alamat IP global dibuang.
 - Isi file dikirim langsung melalui DataChannel; backend tidak menerima isi file.
-- Ukuran transfer dibatasi 25 MiB per file pada PoC ini.
+- Ukuran transfer dibatasi 3 GB per file pada PoC ini.
 
 ## Batasan penting
 
@@ -48,7 +48,7 @@ Transfer menggunakan pesan kontrol JSON dan potongan biner 16 KiB melalui WebRTC
 4. Tidak ada STUN/TURN yang dikonfigurasi. Jika koneksi langsung gagal, PoC seharusnya gagal, bukan mengalihkan isi file ke relay.
 5. File yang disediakan tidak disimpan di server: objek File tetap berada di tab pengirim hingga TTL habis, tidak ada penerima aktif selama 10 detik setelah file telah diumumkan ke penerima, pengirim menghapusnya, atau tab sumber ditutup. Pengirim wajib membiarkan halaman tetap terbuka agar file dapat diunduh.
 6. Penerima melihat metadata katalog dan meminta file melalui DataChannel. Setelah transfer lengkap, Blob hasil transfer berada di memori tab penerima sampai disimpan ke perangkat atau halaman ditutup.
-7. Batas 25 MiB per file dan 50 MiB total file terbitan adalah batas PoC. Perilaku timer, putus sambungan, beberapa perangkat, serta kebijakan LAN-only harus diuji pada jaringan nyata sebelum penggunaan publik.
+7. Batas 3 GB per file dan 3 GB total file terbitan adalah batas PoC. Transfer yang sedang berjalan tidak diputus saat TTL 10 menit habis. PoC standalone ini menahan file di memori penerima; engine terintegrasi di dashboard dapat menyimpan langsung ke disk bila File System Access API tersedia (HTTPS/localhost). Perilaku timer, putus sambungan, beberapa perangkat, serta kebijakan LAN-only harus diuji pada jaringan nyata sebelum penggunaan publik.
 8. `PULSYNC_TRUST_PROXY=1` hanya boleh diaktifkan ketika server berada di belakang reverse proxy tepercaya yang menimpa `X-Forwarded-For`.
 
 ## Diagnosis discovery

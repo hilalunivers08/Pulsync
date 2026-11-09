@@ -79,7 +79,7 @@ export interface LocalTransferState {
 export interface LocalTransferApi {
   getState: () => LocalTransferState
   publishFile: (file: File, targetPeerID?: string) => { ok: boolean; message?: string; id?: string }
-  downloadFile: (key: string) => { ok: boolean; message?: string }
+  downloadFile: (key: string, fileHandle?: FileSystemFileHandle | null) => { ok: boolean; message?: string }
   removePublishedFile: (id: string) => boolean
   removeAvailableFile: (key: string) => boolean
   clearAllFiles: () => boolean

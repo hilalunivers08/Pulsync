@@ -85,11 +85,13 @@ go vet ./...
 
 The integrated browser-to-browser transfer flow currently enforces these limits:
 
-- Maximum file size: 25 MiB per file
-- Maximum published files: 50 MiB total
-- Maximum retained incoming files: 50 MiB total
-- Publication lifetime: up to 10 minutes
+- Maximum file size: 3 GB per file
+- Maximum published files: 3 GB total
+- Maximum retained incoming files: 3 GB total
+- Publication lifetime: up to 10 minutes; an in-progress transfer is allowed to finish past this TTL
 - Early cleanup: 10 seconds after all recipients that received the file listing become inactive
+
+Large files are streamed directly to disk when the browser supports the File System Access API (Chrome/Edge over HTTPS or localhost). On a plain HTTP LAN address the API is unavailable, so the receiving browser falls back to holding the file in memory; files near 3 GB may fail on devices without enough RAM. The legacy `/api/upload` endpoint stores payloads on the backend and supports the same 3 GB per-file limit.
 
 The sender's browser tab must remain open while a file is available. The backend does not store the file payload for this flow. A completed transfer is downloaded by the receiving browser.
 
